@@ -311,6 +311,10 @@ def _excerpt_snippet(conn: sqlite3.Connection, fts_query: str, rowid: int) -> st
     row = conn.execute(
         "SELECT title, body_plain, tags, aliases FROM notes_fts WHERE rowid = ?", (rowid,)
     ).fetchone()
+    if row is None:
+        # A sync from another process rewrote the row (new rowid) after the
+        # search query ran: leave the snippet empty rather than fail.
+        return ""
     body = row[1] or ""
     start = max(0, _first_match(body, fts_query) - _SNIPPET_MAX_CHARS // 4)
     end = min(len(body), start + _SNIPPET_MAX_CHARS)
