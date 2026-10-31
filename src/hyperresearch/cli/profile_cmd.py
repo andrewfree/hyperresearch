@@ -152,10 +152,12 @@ def profile_use(
     from hyperresearch.core.hooks import HookRefusal, install_hooks, installed_platforms
 
     hpr_path = _resolve_executable()
-    actions = install_hooks(vault.root, hpr_path=hpr_path, profile=name)
-    # A project also installed for Codex gets its Codex files re-rendered too.
-    if "codex" in installed_platforms(vault.root):
-        actions += install_hooks(vault.root, hpr_path=hpr_path, profile=name, platform="codex")
+    # Re-render every runtime the project was installed for, and only those:
+    # a Codex-only project must not gain a .claude/ install. A vault with
+    # neither installed gets Claude Code, the default target.
+    actions: list[str] = []
+    for platform in installed_platforms(vault.root) or ["claude"]:
+        actions += install_hooks(vault.root, hpr_path=hpr_path, profile=name, platform=platform)
     # A hook the installer refused (an unparseable .claude/settings.json, a
     # read-only .codex/) is a note about a file it did not write, not a
     # rendered file.
