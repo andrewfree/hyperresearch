@@ -52,6 +52,7 @@ def install(
     import sys
 
     from hyperresearch.core.hooks import (
+        HookRefusal,
         _install_codex_stop_hook,
         _install_hyperresearch_step_skills,
         _set_render_state,
@@ -166,6 +167,10 @@ def install(
 
         hpr_path = _resolve_executable()
         results: list[tuple[str, str | None]] = []
+        # The Codex sandbox keeps .codex/ read-only, so the bootstrap often
+        # gets the Stop hook refused. Joined into the step report, it read as
+        # installed, even on a re-run that wrote nothing.
+        refused: list[str] = []
         for platform in targets:
             _set_render_state(steps_profile, steps_config_path, platform)
             result = _install_hyperresearch_step_skills(target_dir, hpr_path)
@@ -173,12 +178,16 @@ def install(
                 # The Stop gate is what keeps a Codex session on the pipeline;
                 # a project bootstrapped from a global install needs it too.
                 hook = _install_codex_stop_hook(target_dir, hpr_path)
-                result = " | ".join(r for r in (result, hook) if r) or None
+                if isinstance(hook, HookRefusal):
+                    refused.append(hook)
+                else:
+                    result = " | ".join(r for r in (result, hook) if r) or None
             results.append((platform, result))
         if json_output:
             done = [r for _, r in results if r]
             data = {
                 "steps_installed": " | ".join(done) if done else None,
+                "refused": refused,
                 "target": str(target_dir),
                 "targets": targets,
             }
@@ -191,6 +200,10 @@ def install(
                 console.print(f"  {result}")
             else:
                 console.print(f"[dim]Step skills already installed at {where}[/]")
+        if refused:
+            console.print("[yellow]Not installed:[/]")
+            for note in refused:
+                console.print(f"  [yellow]{escape(note)}[/]")
         return
 
     # Global install path: only the user-level Claude Code entry skill +
@@ -262,24 +275,44 @@ def install(
             _print_codex_exec_hint()
         return
 
-    root = Path(path).resolve()
-    _require_directory(root)
+    requested = Path(path).resolve()
+    _require_directory(requested)
+
+    # A directory inside an existing vault belongs to that vault, as it does
+    # for every other command, so everything is installed at the vault root.
+    # Writing here instead put a .hyperresearch/ (for hook.js) in the
+    # subdirectory, which made it a second, empty vault that later commands
+    # run from there used, while install reported the parent.
+    try:
+        existing = Vault.discover(requested)
+    except VaultError:
+        existing = None
+    root = existing.root if existing is not None else requested
+
+    # Validate the gear before anything is written, the vault included: run
+    # after Vault.init, a typo left a new vault behind with the error.
+    project_config = root / ".hyperresearch" / "config.toml"
+    project_config_path = project_config if project_config.exists() else None
+    project_profile = _default_profile(project_config_path)
+    _check_profile(project_profile, project_config_path)
 
     # First-time install in an interactive terminal → run the setup TUI instead
     # (The setup TUI configures a Claude Code install; other targets skip it.)
-    is_new = not (root / ".hyperresearch").exists()
+    is_new = existing is None
     is_interactive = not json_output and sys.stdin.isatty()
     if is_new and is_interactive and targets == ["claude"]:
         from hyperresearch.cli.setup import setup
 
-        setup(path=path, json_output=False)
+        # Called as a plain function, so every option is passed: an omitted
+        # one would arrive as typer's OptionInfo default, not None.
+        setup(path=path, json_output=False, name=name, gear=profile)
         return
 
     # Step 1: Init vault (skip if already exists)
-    try:
-        vault = Vault.discover(root)
+    if existing is not None:
+        vault = existing
         vault_action = "existing"
-    except VaultError:
+    else:
         try:
             vault = Vault.init(root, name=name, platforms=tuple(targets))
             vault_action = "created"
@@ -294,12 +327,6 @@ def install(
     from hyperresearch.core.agent_docs import _resolve_executable, inject_agent_docs
 
     hpr_path = _resolve_executable()
-
-    # Validate the gear before any per-target file is written.
-    project_config = root / ".hyperresearch" / "config.toml"
-    project_config_path = project_config if project_config.exists() else None
-    project_profile = _default_profile(project_config_path)
-    _check_profile(project_profile, project_config_path)
 
     doc_actions: list[str] = []
     hook_actions: list[str] = []
@@ -333,19 +360,32 @@ def install(
         if vault_action == "created":
             console.print(f"[green]Vault created:[/] {vault.root}")
         else:
-            console.print(f"[dim]Vault exists:[/] {vault.root}")
+            console.print(f"[dim]Vault exists:[/] {escape(str(vault.root))}")
+            if requested != vault.root:
+                console.print(
+                    f"[dim]{escape(str(requested))} is inside the vault, so it was "
+                    "installed at the vault root.[/]"
+                )
 
         if doc_actions:
             console.print("[green]Agent docs:[/]")
             for action in doc_actions:
                 console.print(f"  {action}")
 
-        if hook_actions:
+        # A refused hook (a settings file install could not merge into) was
+        # not installed, so it must not be listed as if it were.
+        refused = [a for a in hook_actions if isinstance(a, HookRefusal)]
+        installed = [a for a in hook_actions if not isinstance(a, HookRefusal)]
+        if installed:
             console.print("[green]Hooks installed:[/]")
-            for action in hook_actions:
+            for action in installed:
                 console.print(f"  {action}")
-        else:
+        elif not refused:
             console.print("[dim]All hooks already installed.[/]")
+        if refused:
+            console.print("[yellow]Not installed:[/]")
+            for note in refused:
+                console.print(f"  [yellow]{escape(note)}[/]")
 
         if crawl4ai_status == "configured":
             console.print("[green]crawl4ai:[/] detected, set as default provider + browser ready")

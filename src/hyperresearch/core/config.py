@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+# A TOML bare key; anything else has to be written as a quoted key.
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
@@ -317,8 +321,43 @@ class VaultConfig:
         )
 
     @staticmethod
+    def _toml_string(value: str) -> str:
+        # Escaped, so a quote, a backslash (a Windows path) or a control
+        # character in a value cannot end the string early. An unescaped one
+        # wrote a file that every later command, `config set` included, fails
+        # to load.
+        from hyperresearch.core.codex import toml_basic_string
+
+        return toml_basic_string(value)
+
+    @staticmethod
+    def _toml_key(key: str) -> str:
+        # User-defined profile names and overlay keys come back from tomllib
+        # unquoted; one that is not a bare key (`[profile."my gear"]`) must be
+        # quoted again on the way out.
+        return key if _BARE_KEY.fullmatch(key) else VaultConfig._toml_string(key)
+
+    @staticmethod
+    def _toml_number(value) -> str:
+        # Written bare, so anything but a number (the raw `config set`
+        # argument, say) would come out as `boost_evergreen = high`. A numeric
+        # string, which a hand-quoted `"1.5"` loads as, still goes out as the
+        # number, as it always has.
+        if isinstance(value, str):
+            try:
+                value = int(value)
+            except ValueError:
+                try:
+                    value = float(value)
+                except ValueError:
+                    raise ValueError(f"expected a number, got {value!r}") from None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"expected a number, got {value!r}")
+        return str(value)
+
+    @staticmethod
     def _toml_array(items) -> str:
-        quoted = ", ".join(f'"{item}"' for item in items)
+        quoted = ", ".join(VaultConfig._toml_string(str(item)) for item in items)
         return f"[{quoted}]"
 
     @staticmethod
@@ -328,10 +367,13 @@ class VaultConfig:
         if isinstance(value, (list, tuple)):
             return "[" + ", ".join(VaultConfig._toml_value(v) for v in value) + "]"
         if isinstance(value, dict):
-            inner = ", ".join(f"{k} = {VaultConfig._toml_value(v)}" for k, v in value.items())
+            inner = ", ".join(
+                f"{VaultConfig._toml_key(k)} = {VaultConfig._toml_value(v)}"
+                for k, v in value.items()
+            )
             return "{ " + inner + " }"
         if isinstance(value, str):
-            return f'"{value}"'
+            return VaultConfig._toml_string(value)
         return str(value)
 
     def _section_lines(self, header: str, section, preamble: tuple[str, ...] = ()) -> list[str]:
@@ -345,29 +387,29 @@ class VaultConfig:
     def save(self, config_path: Path) -> None:
         lines = [
             "[vault]",
-            f'name = "{self.name}"',
-            f'default_status = "{self.default_status}"',
-            f'research_dir = "{self.research_dir}"',
+            f"name = {self._toml_string(self.name)}",
+            f"default_status = {self._toml_string(self.default_status)}",
+            f"research_dir = {self._toml_string(self.research_dir)}",
             "",
             "[search]",
-            f"title_weight = {self.search_title_weight}",
-            f"body_weight = {self.search_body_weight}",
-            f"tags_weight = {self.search_tags_weight}",
-            f"aliases_weight = {self.search_aliases_weight}",
-            f"boost_evergreen = {self.search_boost_evergreen}",
-            f"penalize_deprecated = {self.search_penalize_deprecated}",
-            f"penalize_stale = {self.search_penalize_stale}",
-            f"default_limit = {self.search_default_limit}",
-            f"chars_per_token = {self.search_chars_per_token}",
-            f"snippet_len = {self.search_snippet_len}",
+            f"title_weight = {self._toml_number(self.search_title_weight)}",
+            f"body_weight = {self._toml_number(self.search_body_weight)}",
+            f"tags_weight = {self._toml_number(self.search_tags_weight)}",
+            f"aliases_weight = {self._toml_number(self.search_aliases_weight)}",
+            f"boost_evergreen = {self._toml_number(self.search_boost_evergreen)}",
+            f"penalize_deprecated = {self._toml_number(self.search_penalize_deprecated)}",
+            f"penalize_stale = {self._toml_number(self.search_penalize_stale)}",
+            f"default_limit = {self._toml_number(self.search_default_limit)}",
+            f"chars_per_token = {self._toml_number(self.search_chars_per_token)}",
+            f"snippet_len = {self._toml_number(self.search_snippet_len)}",
             "",
             "[web]",
-            f'provider = "{self.web_provider}"',
-            f'profile = "{self.web_profile}"',
+            f"provider = {self._toml_string(self.web_provider)}",
+            f"profile = {self._toml_string(self.web_profile)}",
             f"magic = {'true' if self.web_magic else 'false'}",
             "",
             "[pipeline]",
-            f'profile = "{self.pipeline_profile}"',
+            f"profile = {self._toml_string(self.pipeline_profile)}",
             "",
         ]
         lines += self._section_lines("fetch", self.fetch)
@@ -421,11 +463,19 @@ class VaultConfig:
         # Round-trip user-defined [profile.<name>] overlays verbatim — losing
         # them on save would silently destroy custom pipeline profiles.
         for overlay_name, table in self.profile_overlays.items():
-            lines += ["", f"[profile.{overlay_name}]"]
-            lines += [f"{k} = {self._toml_value(v)}" for k, v in table.items()]
+            lines += ["", f"[profile.{self._toml_key(overlay_name)}]"]
+            lines += [f"{self._toml_key(k)} = {self._toml_value(v)}" for k, v in table.items()]
+        text = "\n".join(lines) + "\n"
+        # Every command loads this file first, so text that does not parse
+        # would lock the user out of all of them, `config set` included.
+        # Refuse before the old file is touched.
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"refusing to write an unreadable {config_path.name}: {exc}") from exc
         config_path.parent.mkdir(parents=True, exist_ok=True)
         # Explicit UTF-8. TOML is UTF-8 by spec and `load` reads it as such, so
         # taking the platform default here (cp1252 on Windows) writes a file
         # this same class cannot read back the moment any value or comment
         # carries a non-ASCII character.
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        config_path.write_text(text, encoding="utf-8")

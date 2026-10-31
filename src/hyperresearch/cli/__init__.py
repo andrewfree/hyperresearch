@@ -3,18 +3,18 @@
 import os
 import sys
 
-# Python version guard. The pyproject.toml `requires-python = ">=3.11,<3.14"`
+# Python version guard. The pyproject.toml `requires-python = ">=3.11,<3.15"`
 # normally blocks pip from installing on unsupported versions, but users who
 # bypass it (--ignore-requires-python, constraints overrides, or running from
-# the source tree) can still land here on 3.14+ where Crawl4AI's lxml~=5.3
-# pin breaks. One-line stderr warning so they understand the failure mode
-# before it manifests as a cryptic compile error or runtime ImportError.
-# Set HYPERRESEARCH_SKIP_PYVER_CHECK=1 to silence (CI, tests).
-if sys.version_info >= (3, 14) and not os.environ.get("HYPERRESEARCH_SKIP_PYVER_CHECK"):
+# the source tree) can still land here on an untested 3.15+. One-line stderr
+# warning so they understand the failure mode before it manifests as a
+# cryptic compile error or runtime ImportError. Keep the bound in step with
+# requires-python: 3.14 is supported, and warning there told every 3.14 user
+# otherwise. Set HYPERRESEARCH_SKIP_PYVER_CHECK=1 to silence (CI, tests).
+if sys.version_info >= (3, 15) and not os.environ.get("HYPERRESEARCH_SKIP_PYVER_CHECK"):
     sys.stderr.write(
         f"[hyperresearch] WARNING: Python {sys.version_info.major}.{sys.version_info.minor} "
-        "is not yet supported. Please use Python 3.11, 3.12, or 3.13. "
-        "Tracking upstream fix at https://github.com/unclecode/crawl4ai/issues/1903\n"
+        "is not yet supported. Please use Python 3.11 to 3.14.\n"
     )
 
 # Fix Windows console encoding — crawl4ai's rich logger uses Unicode chars that
