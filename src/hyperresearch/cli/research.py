@@ -325,7 +325,11 @@ def _extract_links_from_results(results) -> list[str]:
     url_re = re.compile(r'https?://[^\s<>\[\]"\']+')
     for r in results:
         for match in url_re.finditer(r.content):
-            url = match.group(0).rstrip(".,;:)")
+            url = match.group(0)
+            while url and url[-1] in ".,;:)":
+                if url[-1] == ")" and url.count("(") >= url.count(")"):
+                    break
+                url = url[:-1]
             # Skip common noise
             parsed = urlparse(url)
             if parsed.netloc and not any(
