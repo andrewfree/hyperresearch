@@ -162,7 +162,7 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
     return plan
 
 
-def execute_sync(vault, plan: SyncPlan) -> SyncResult:
+def execute_sync(vault, plan: SyncPlan, *, deleted_ids: set[str] | None = None) -> SyncResult:
     """Execute the sync plan within a single transaction for atomicity."""
     result = SyncResult(unchanged=plan.unchanged)
     start = time.monotonic()
@@ -171,7 +171,8 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
     conn = vault.db
     conn.execute("BEGIN IMMEDIATE")
 
-    changed_ids: set[str] = set()
+    # Explicit removals already deleted their rows before move detection.
+    changed_ids: set[str] = set(deleted_ids or ())
     assets_root = vault.root / "research" / "assets"
 
     # Defense-in-depth (#25): refuse to silently smash an existing row's path
