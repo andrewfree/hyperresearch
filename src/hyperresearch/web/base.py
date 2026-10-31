@@ -168,6 +168,23 @@ class WebResult:
         return None
 
 
+class BatchResults(list):
+    """What ``fetch_many`` returns: the WebResults it got, and what it lost.
+
+    A list of the results, so callers that only iterate them are unaffected.
+    ``failures`` holds one ``{"url", "error"}`` per input URL that produced no
+    result. A bare list has no room for that, and a batch caller handed a
+    short list cannot tell which URLs were lost or why.
+    """
+
+    def __init__(self, results=(), failures: list[dict] | None = None):
+        super().__init__(results)
+        self.failures: list[dict] = list(failures or [])
+
+    def fail(self, url: str, error: str) -> None:
+        self.failures.append({"url": url, "error": error})
+
+
 @runtime_checkable
 class WebProvider(Protocol):
     """Protocol for web content providers.
