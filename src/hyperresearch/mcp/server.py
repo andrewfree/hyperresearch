@@ -11,6 +11,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from hyperresearch.core.db import parent_subtree_clause
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 
 server = FastMCP("hyperresearch", instructions=(
     "hyperresearch is an agent-driven research knowledge base. Use these tools to search, read, "
@@ -184,7 +185,7 @@ def get_backlinks(note_id: str) -> str:
     vault.auto_sync()
     rows = vault.db.execute(
         "SELECT l.source_id, n.title, l.line_number, l.context "
-        "FROM links l JOIN notes n ON l.source_id = n.id WHERE l.target_id = ? ORDER BY n.title",
+        f"FROM ({NOTE_LINKS_SQL}) l JOIN notes n ON l.source_id = n.id WHERE l.target_id = ? ORDER BY n.title",
         (note_id,),
     ).fetchall()
     backlinks = [{"source_id": r["source_id"], "title": r["title"],
@@ -203,7 +204,7 @@ def get_hubs(limit: int = 20) -> str:
     vault.auto_sync()
     rows = vault.db.execute(
         "SELECT l.target_id as id, n.title, COUNT(*) as inbound "
-        "FROM links l JOIN notes n ON l.target_id = n.id "
+        f"FROM ({NOTE_LINKS_SQL}) l JOIN notes n ON l.target_id = n.id "
         "WHERE l.target_id IS NOT NULL GROUP BY l.target_id ORDER BY inbound DESC LIMIT ?",
         (limit,),
     ).fetchall()
@@ -222,8 +223,8 @@ def vault_status() -> str:
     tag_count = conn.execute("SELECT COUNT(DISTINCT tag) as c FROM tags").fetchone()["c"]
     top_tags = [{"tag": r["tag"], "count": r["count"]} for r in conn.execute(
         "SELECT tag, COUNT(*) as count FROM tags GROUP BY tag ORDER BY count DESC LIMIT 10")]
-    total_links = conn.execute("SELECT COUNT(*) as c FROM links").fetchone()["c"]
-    broken = conn.execute("SELECT COUNT(*) as c FROM links WHERE target_id IS NULL").fetchone()["c"]
+    total_links = conn.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL})").fetchone()["c"]
+    broken = conn.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL").fetchone()["c"]
     total_words = conn.execute("SELECT COALESCE(SUM(word_count), 0) as c FROM notes").fetchone()["c"]
     return json.dumps({"vault_name": vault.config.name, "total_notes": total, "by_status": by_status,
                         "unique_tags": tag_count, "top_tags": top_tags, "total_links": total_links,
@@ -249,10 +250,10 @@ def lint_vault(rule: str = "") -> str:
         for r in conn.execute("SELECT id FROM notes WHERE type NOT IN ('index','raw') AND (summary IS NULL OR LENGTH(TRIM(COALESCE(summary, ''))) = 0)"):
             issues.append({"rule": "missing-summary", "severity": "warning", "note_id": r["id"], "message": "No summary"})
     if "broken-links" in rules:
-        for r in conn.execute("SELECT source_id, target_ref FROM links WHERE target_id IS NULL"):
+        for r in conn.execute(f"SELECT source_id, target_ref FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL"):
             issues.append({"rule": "broken-links", "severity": "warning", "note_id": r["source_id"], "message": f"Broken: [[{r['target_ref']}]]"})
     if "orphaned-notes" in rules:
-        for r in conn.execute("SELECT id FROM notes WHERE type NOT IN ('index','raw') AND id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL) AND id NOT IN (SELECT DISTINCT source_id FROM links)"):
+        for r in conn.execute(f"SELECT id FROM notes WHERE type NOT IN ('index','raw') AND id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL) AND id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))"):
             issues.append({"rule": "orphaned-notes", "severity": "info", "note_id": r["id"], "message": "No links"})
     return json.dumps({"issues": issues, "total": len(issues), "warnings": sum(1 for i in issues if i["severity"] == "warning")})
 

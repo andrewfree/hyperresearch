@@ -7,6 +7,7 @@ from datetime import UTC
 import typer
 
 from hyperresearch.cli._output import console, output
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.output import error, success
 
 
@@ -55,7 +56,7 @@ def repair(
             console.print("[bold]2/6 Stubbing broken links...[/]")
         from hyperresearch.core.stubs import create_stubs
         rows = vault.db.execute(
-            "SELECT DISTINCT target_ref FROM links WHERE target_id IS NULL"
+            f"SELECT DISTINCT target_ref FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL"
         ).fetchall()
         created, errors = create_stubs(
             vault, [row["target_ref"] for row in rows], skip_errors=True,
@@ -171,12 +172,12 @@ def repair(
                 pass
 
         # Review -> Evergreen
-        reviews = vault.db.execute("""
+        reviews = vault.db.execute(f"""
             SELECT n.id, n.path FROM notes n
             WHERE n.status = 'review' AND n.type NOT IN ('index')
               AND n.word_count >= 100
-              AND (n.id IN (SELECT DISTINCT source_id FROM links)
-                   OR n.id IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL))
+              AND (n.id IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
+                   OR n.id IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL))
         """).fetchall()
         for row in reviews:
             try:
@@ -249,12 +250,12 @@ def repair(
             console.print("[dim]6/6 Skipping agent docs[/]")
 
     # Final lint summary
-    broken = vault.db.execute("SELECT COUNT(*) as c FROM links WHERE target_id IS NULL").fetchone()["c"]
-    orphans = vault.db.execute("""
+    broken = vault.db.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL").fetchone()["c"]
+    orphans = vault.db.execute(f"""
         SELECT COUNT(*) as c FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
     """).fetchone()["c"]
     total = vault.db.execute("SELECT COUNT(*) as c FROM notes WHERE type NOT IN ('index')").fetchone()["c"]
     report["health"] = {"total_notes": total, "broken_links": broken, "orphans": orphans}
