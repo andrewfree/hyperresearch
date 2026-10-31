@@ -129,13 +129,18 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
         # Table doesn't exist yet (fresh vault before schema init)
         pass
 
-    for rel_path, mtime in disk_files.items():
+    for rel_path, mtime in list(disk_files.items()):
         full_path = vault.root / rel_path
         if rel_path not in db_state:
             plan.to_add.append(full_path)
         elif force or abs(mtime - db_state[rel_path][0]) > 0.001:
             # mtime differs — verify with content hash (raw bytes)
-            current_hash = hashlib.sha256(full_path.read_bytes()).hexdigest()
+            try:
+                current_hash = hashlib.sha256(full_path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                # Removed since the stat above, as there: a delete.
+                del disk_files[rel_path]
+                continue
             if force or current_hash != db_state[rel_path][1]:
                 plan.to_update.append(full_path)
             else:
