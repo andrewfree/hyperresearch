@@ -66,7 +66,7 @@ def test_natural_language_query_with_hyphen_does_not_crash(query_vault):
 @pytest.mark.parametrize(("query", "expected"), [
     ("covid-19 AND vaccines", '"covid-19" AND vaccines'),
     ("title:vaccine OR e-mail", '"title:vaccine" OR "e-mail"'),
-    ("llama3.1 AND ci/cd", '"llama3.1" AND "ci/cd"'),
+    ("llama3.1 AND ci/cd", '("llama3.1" OR "llama 3 1") AND "ci/cd"'),
     ("covid-19* AND vacc*", '"covid-19"* AND vacc*'),
     ("(covid-19 OR flu) AND vaccines", '( "covid-19" OR flu ) AND vaccines'),
 ])

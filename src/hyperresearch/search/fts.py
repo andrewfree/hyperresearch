@@ -18,14 +18,30 @@ class SearchQueryError(ValueError):
 
 def _split_alphanum(word: str) -> list[str]:
     """Split words where letters meet digits: 'mamba3' -> ['mamba', '3'],
-    'gpt4o' -> ['gpt', '4', 'o'], 'llama3.1' -> ['llama', '3', '1'].
+    'gpt4o' -> ['gpt', '4o'], 'llama3.1' -> ['llama', '3', '1'].
+
+    A digit followed by a letter stays one part: text writes 'GPT-4o' or
+    'Mamba-3B', which the tokenizer indexes as 'gpt', '4o', so the spaced
+    phrase of 'gpt4o' must be 'gpt 4o' to match it.
     """
-    # Insert space at letter/digit boundaries
+    # Insert space where a letter meets a digit
     split = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', word)
-    split = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', split)
     # Also split on dots/hyphens between digits (3.1 -> 3 1)
     split = re.sub(r'(\d)[.\-](\d)', r'\1 \2', split)
     return split.split()
+
+
+def _glued_phrase(word: str) -> str | None:
+    """The spaced form of a glued term as one phrase: 'mamba3' -> '"mamba 3"'.
+
+    None when the word does not split. A phrase needs its parts adjacent and
+    in order, so 'llama3.1' finds 'Llama 3.1' but not a note that merely holds
+    llama, 3 and 1 somewhere, as AND-ed separate terms did.
+    """
+    subwords = _split_alphanum(word)
+    if len(subwords) < 2:
+        return None
+    return '"' + " ".join(subwords) + '"'
 
 
 # Quoted phrases (with an optional prefix star), punctuation FTS5 gives meaning
@@ -64,27 +80,144 @@ def _operator_term(word: str) -> str | None:
     return f'"{core}"{star}'
 
 
-def _preprocess_operator_query(tokens: list[str]) -> str:
-    out: list[str] = []
-    in_near = False
-    for tok in tokens:
-        if tok.startswith('"') or tok in _BINARY_OPERATORS:
+def _near_group(tokens: list[str], i: int) -> tuple[tuple[str, str] | None, int]:
+    """Parse a NEAR group from tokens[i] == 'NEAR' to its ')'.
+
+    Returns the group as an operand (None when every phrase in it dropped
+    out) and the index after it. NEAR takes only phrases, so glued terms are
+    not expanded here; anything else is kept for FTS5 to reject as before.
+    """
+    out = ["NEAR", "("]
+    phrases = 0
+    seen_comma = False
+    i += 2
+    while i < len(tokens) and tokens[i] != ")":
+        tok = tokens[i]
+        i += 1
+        if tok == ",":
+            seen_comma = True
             out.append(tok)
-        elif tok == "(":
-            in_near = bool(out) and out[-1] == "NEAR"
-            out.append(tok)
-        elif tok == ")":
-            in_near = False
-            out.append(tok)
-        elif tok == ",":
-            # Only NEAR(a b, N) gives a comma meaning; elsewhere it is punctuation.
-            if in_near:
+        elif tok.startswith('"'):
+            if _TOKEN_CHAR_RE.search(tok):
                 out.append(tok)
+                phrases += not seen_comma
+        elif tok in _BINARY_OPERATORS or tok == "(":
+            out.append(tok)
         else:
             term = _operator_term(tok)
             if term:
                 out.append(term)
+                phrases += not seen_comma
+    if i == len(tokens):
+        # Unclosed: keep it so FTS5 reports the syntax error.
+        return ("raw", " ".join(out)), i
+    if not phrases:
+        return None, i + 1
+    return ("term", " ".join([*out, ")"])), i + 1
+
+
+def _operator_items(tokens: list[str], i: int, nested: bool) -> tuple[list[tuple[str, str]], int, bool]:
+    """Parse operator-mode tokens into ("op" | "term" | "group" | "raw", text)
+    items up to the ')' that closes this level.
+
+    Returns the items, the index after them, and whether a ')' closed them.
+    A "term" can sit next to another under FTS5's implicit AND; a "group" is
+    parenthesized and cannot. A "raw" item is an unbalanced parenthesis, kept
+    verbatim so FTS5 still rejects the query.
+    """
+    items: list[tuple[str, str]] = []
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _BINARY_OPERATORS:
+            items.append(("op", tok))
+            i += 1
+        elif tok == "NEAR" and tokens[i + 1:i + 2] == ["("]:
+            near, i = _near_group(tokens, i)
+            if near:
+                items.append(near)
+        elif tok == "(":
+            inner, i, closed = _operator_items(tokens, i + 1, nested=True)
+            text = _join_items(_drop_dangling_operators(inner))
+            if not closed:
+                items.append(("raw", f"( {text}".rstrip()))
+            elif text:
+                items.append(("group", f"( {text} )"))
+        elif tok == ")":
+            if nested:
+                return items, i + 1, True
+            items.append(("raw", tok))
+            i += 1
+        elif tok.startswith('"'):
+            if _TOKEN_CHAR_RE.search(tok):
+                items.append(("term", tok))
+            i += 1
+        elif tok == ",":
+            # Only NEAR(a b, N) gives a comma meaning; elsewhere it is punctuation.
+            i += 1
+        else:
+            term = _operator_term(tok)
+            if term:
+                core = term.rstrip("*")
+                star = term[len(core):]
+                phrase = _glued_phrase(core.strip('"'))
+                if phrase:
+                    items.append(("group", f"({term} OR {phrase}{star})"))
+                else:
+                    items.append(("term", term))
+            i += 1
+    return items, i, False
+
+
+def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Drop operators that lost an operand when a term reduced to nothing.
+
+    'attention AND -' becomes 'attention'. Operators left side by side keep
+    the later one, so 'AI AND / OR ML' becomes 'AI OR ML' and 'a AND NOT b',
+    which FTS5 rejects, becomes 'a NOT b'.
+    """
+    out: list[tuple[str, str]] = []
+    for item in items:
+        if item[0] != "op":
+            out.append(item)
+        elif out and out[-1][0] == "op":
+            out[-1] = item
+        elif out:
+            out.append(item)
+    if out and out[-1][0] == "op":
+        out.pop()
+    return out
+
+
+def _join_items(items: list[tuple[str, str]]) -> str:
+    """Join items, making an implicit AND next to a group explicit.
+
+    FTS5 allows implicit AND only between phrases and NEAR groups, so a run
+    of operands holding a group is joined with AND and parenthesized: implicit
+    AND binds tighter than every operator, which the parentheses keep.
+    """
+    out: list[str] = []
+    run: list[tuple[str, str]] = []
+
+    def flush() -> None:
+        if len(run) > 1 and any(kind == "group" for kind, _ in run):
+            out.append("( " + " AND ".join(text for _, text in run) + " )")
+        else:
+            out.extend(text for _, text in run)
+        run.clear()
+
+    for item in items:
+        if item[0] == "op":
+            flush()
+            out.append(item[1])
+        else:
+            run.append(item)
+    flush()
     return " ".join(out)
+
+
+def _preprocess_operator_query(tokens: list[str]) -> str:
+    items, _, _ = _operator_items(tokens, 0, nested=False)
+    return _join_items(_drop_dangling_operators(items))
 
 
 def preprocess_query(raw: str) -> str:
@@ -117,13 +250,13 @@ def preprocess_query(raw: str) -> str:
                     clean = re.sub(r'[*^():{}"]', '', word)
                     if not _TOKEN_CHAR_RE.search(clean):
                         continue
-                    # Split glued alphanumeric (mamba3 -> mamba + 3) so 'Mamba 3'
+                    # Split glued alphanumeric (mamba3 -> "mamba 3") so 'Mamba 3'
                     # matches. unicode61 indexes 'mamba3' as one token, which
                     # the split alone can never match, so accept either form.
-                    subwords = _split_alphanum(clean)
-                    if len(subwords) > 1:
-                        split = " ".join(f'"{sw}"*' for sw in subwords)
-                        processed.append(f'("{clean}"* OR ({split}))')
+                    # The star on the phrase prefixes only its last part.
+                    phrase = _glued_phrase(clean)
+                    if phrase:
+                        processed.append(f'("{clean}"* OR {phrase}*)')
                     else:
                         processed.append(f'"{clean}"*')
     # Explicit AND: FTS5 only allows implicit AND between phrases, not next to
