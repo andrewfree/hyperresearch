@@ -52,6 +52,7 @@ def install(
     import sys
 
     from hyperresearch.core.hooks import (
+        HookRefusal,
         _install_codex_stop_hook,
         _install_hyperresearch_step_skills,
         _set_render_state,
@@ -340,12 +341,20 @@ def install(
             for action in doc_actions:
                 console.print(f"  {action}")
 
-        if hook_actions:
+        # A refused hook (a settings file install could not merge into) was
+        # not installed, so it must not be listed as if it were.
+        refused = [a for a in hook_actions if isinstance(a, HookRefusal)]
+        installed = [a for a in hook_actions if not isinstance(a, HookRefusal)]
+        if installed:
             console.print("[green]Hooks installed:[/]")
-            for action in hook_actions:
+            for action in installed:
                 console.print(f"  {action}")
-        else:
+        elif not refused:
             console.print("[dim]All hooks already installed.[/]")
+        if refused:
+            console.print("[yellow]Not installed:[/]")
+            for note in refused:
+                console.print(f"  [yellow]{escape(note)}[/]")
 
         if crawl4ai_status == "configured":
             console.print("[green]crawl4ai:[/] detected, set as default provider + browser ready")

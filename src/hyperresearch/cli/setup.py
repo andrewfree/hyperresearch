@@ -7,6 +7,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
@@ -120,7 +121,7 @@ def setup(
     console.print()
 
     from hyperresearch.core.agent_docs import _resolve_executable, inject_agent_docs
-    from hyperresearch.core.hooks import install_hooks
+    from hyperresearch.core.hooks import HookRefusal, install_hooks
     from hyperresearch.core.vault import Vault, VaultError
 
     # Init vault
@@ -149,7 +150,10 @@ def setup(
     # persisted scale gear, if one was chosen via `hpr profile use`)
     hook_actions = install_hooks(root, hpr_path=hpr_path, profile=vault.config.pipeline_profile)
     for action in hook_actions:
-        console.print(f"  [green]Hook:[/] {action}")
+        if isinstance(action, HookRefusal):
+            console.print(f"  [yellow]Not installed:[/] {escape(action)}")
+        else:
+            console.print(f"  [green]Hook:[/] {action}")
     if not hook_actions:
         console.print("  [dim]Hooks already installed[/]")
 
