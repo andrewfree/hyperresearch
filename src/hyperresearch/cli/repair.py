@@ -235,9 +235,9 @@ def repair(
             console.print("[bold]6/6 Updating agent docs...[/]")
         from hyperresearch.core.agent_docs import inject_agent_docs
         from hyperresearch.core.hooks import installed_platforms
-        modified = inject_agent_docs(vault.root)
-        if "codex" in installed_platforms(vault.root):
-            modified += inject_agent_docs(vault.root, platform="codex")
+        modified: list[str] = []
+        for platform in installed_platforms(vault.root) or ["claude"]:
+            modified += inject_agent_docs(vault.root, platform=platform)
         report["agent_docs"] = modified
         if not json_output:
             if modified:
