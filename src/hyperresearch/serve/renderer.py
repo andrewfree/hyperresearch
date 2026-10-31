@@ -55,6 +55,14 @@ def _image(url: str, alt: str) -> str:
     return f'<img src="{url}" alt="{alt}">'
 
 
+# Bodies are fetched pages, and re.sub holds the GIL, so one quadratic scan
+# stalls every viewer thread. No bracket pattern may rescan text that the
+# next candidate scans again: link text stops at the next '[' and a URL at
+# the next '(' or ')', so each byte is scanned a bounded number of times.
+# A URL may still hold balanced (...) pairs, as Wikipedia URLs do.
+_LINK_TEXT = r"[^\[\]]"
+_LINK_URL = r"((?:[^()]|\([^()]*\))+)"
+
 # Simple markdown patterns
 MD_PATTERNS = [
     # Headers
@@ -71,9 +79,9 @@ MD_PATTERNS = [
     # Code
     (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
     # Links
-    (re.compile(r"\[([^\]]+)\]\(([^)]+)\)"), lambda m: _link(m.group(2), m.group(1))),
+    (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
     # Images
-    (re.compile(r"!\[([^\]]*)\]\(([^)]+)\)"), lambda m: _image(m.group(2), m.group(1))),
+    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
     # Horizontal rule
     (re.compile(r"^---+$", re.MULTILINE), r"<hr>"),
     # Blockquotes
@@ -111,7 +119,10 @@ def render_markdown(body: str) -> str:
         display = display.strip()
         return f'<a href="/note/{target}" class="wiki-link">{display}</a>'
 
-    text = re.sub(r"\[\[([^\]]+)\]\]", replace_wiki_link, text)
+    # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
+    # The body was escaped, so a raw '"' here is a link rendered above
+    # ('[[t [a](x) u]]'); taken as a target it would end the href attribute.
+    text = re.sub(r'\[\[([^\[\]\n"]+)\]\]', replace_wiki_link, text)
 
     # Lists (simple)
     text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
