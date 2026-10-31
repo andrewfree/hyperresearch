@@ -224,7 +224,9 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
 
     for p in to_update:
         _scan_edit(p)
-    if released:
+    # A new file can reveal a move even when the replacement at its old
+    # path kept the indexed mtime, so no update has released its id yet.
+    if released or to_add:
         for p in sorted(to_add, key=Path.as_posix):
             try:
                 scanned[p] = _read(p)
