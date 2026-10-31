@@ -311,6 +311,16 @@ def _migrate_v13_nullable_retraction(conn: sqlite3.Connection) -> None:
         conn.execute(f"PRAGMA foreign_keys={int(foreign_keys)}")
 
 
+def _migrate_v14_wiki_links(conn: sqlite3.Connection) -> None:
+    """Restore references omitted by the old citation filter in unchanged notes."""
+    from hyperresearch.core.sync import _refresh_footnote_links, _resolve_null_links
+
+    # Rebuild from cached bodies without invalidating the fingerprints that
+    # let sync preserve claims and other data across file moves.
+    _refresh_footnote_links(conn, set(), include_valid=True)
+    _resolve_null_links(conn)
+
+
 MIGRATIONS: dict[int, str | Callable[[sqlite3.Connection], None]] = {
     2: """
 CREATE TABLE IF NOT EXISTS tag_aliases (
@@ -360,6 +370,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
     11: _migrate_v11_oa_recovery,
     12: _migrate_v12_oa_recovery_kind,
     13: _migrate_v13_nullable_retraction,
+    14: _migrate_v14_wiki_links,
 }
 
 

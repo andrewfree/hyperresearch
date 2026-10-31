@@ -803,9 +803,9 @@ def _delete_note_from_db(conn, note_id: str) -> None:
     conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
 
-def _refresh_footnote_links(conn, changed_ids: set[str]) -> None:
+def _refresh_footnote_links(conn, changed_ids: set[str], *, include_valid: bool = False) -> None:
     """Revisit ambiguous refs after all ids, titles and aliases are indexed."""
-    if not changed_ids:
+    if not changed_ids and not include_valid:
         return
     known_refs = known_note_refs(conn)
     # Revisit unchanged sources too: a newly created target can turn a
@@ -817,11 +817,12 @@ def _refresh_footnote_links(conn, changed_ids: set[str]) -> None:
         for line_num, line in enumerate(strip_code(body).split("\n"), 1):
             for match in WIKI_LINK_RE.finditer(line):
                 ref = match.group(1).strip().rstrip("\\")
-                if is_valid_wiki_link_target(ref):
+                valid = is_valid_wiki_link_target(ref)
+                if valid and not include_valid:
                     continue
                 if not is_valid_wiki_link_target(ref, allow_footnotes=True):
                     continue
-                if ref.lower() in known_refs:
+                if valid or ref.lower() in known_refs:
                     conn.execute(
                         "INSERT OR IGNORE INTO links (source_id, target_ref, line_number, context) "
                         "VALUES (?, ?, ?, ?)",
