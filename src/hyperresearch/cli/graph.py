@@ -194,7 +194,7 @@ def graph_stub(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Create stub notes for all broken [[links]]."""
-    from hyperresearch.core.note import indexed_note_ids, stub_summary, write_note
+    from hyperresearch.core.stubs import create_stubs
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
@@ -225,21 +225,7 @@ def graph_stub(
     # Stubs are sidelined to research/temp/ (not research/notes/) so they
     # resolve broken wiki-links without cluttering the real notes listing.
     # Sync still picks them up via rglob, so link-resolution works.
-    created = []
-    for target in targets:
-        title = target.replace("-", " ").replace("_", " ").title()
-        path = write_note(
-            vault.temp_dir,
-            title,
-            body=f"# {title}\n\n*Stub — created to resolve a broken link. Expand this note.*\n",
-            note_id=target,
-            status="draft",
-            summary=stub_summary(target),
-            # The resolver never matches a ref by its slug, so a broken
-            # [[foo bar]] can slugify to an id another note already holds.
-            taken_ids=indexed_note_ids(vault.db),
-        )
-        created.append({"id": target, "title": title, "path": path.relative_to(vault.root).as_posix()})
+    created, _ = create_stubs(vault, targets)
 
     # Sync to resolve the links
     from hyperresearch.core.sync import compute_sync_plan, execute_sync

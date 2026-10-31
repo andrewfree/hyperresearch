@@ -53,28 +53,19 @@ def repair(
     if stub_broken:
         if not json_output:
             console.print("[bold]2/6 Stubbing broken links...[/]")
-        from hyperresearch.core.note import indexed_note_ids, stub_summary, write_note
+        from hyperresearch.core.stubs import create_stubs
         rows = vault.db.execute(
             "SELECT DISTINCT target_ref FROM links WHERE target_id IS NULL"
         ).fetchall()
-        for row in rows:
-            target = row["target_ref"]
-            title = target.replace("-", " ").replace("_", " ").title()
-            try:
-                # Sideline stubs to research/temp/ — see note in cli/graph.py
-                write_note(
-                    vault.temp_dir, title,
-                    body=f"# {title}\n\n*Stub — created to resolve a broken link. Expand this note.*\n",
-                    note_id=target, status="draft",
-                    summary=stub_summary(target),
-                    taken_ids=indexed_note_ids(vault.db),
+        created, errors = create_stubs(
+            vault, [row["target_ref"] for row in rows], skip_errors=True,
+        )
+        stubs_created = len(created)
+        if not json_output:
+            for failure in errors:
+                console.print(
+                    f"  [yellow]stub skipped[/] {failure['target']!r}: {failure['error']}"
                 )
-                stubs_created += 1
-            except Exception as exc:
-                # A visible skip, not a silent one: a bare pass here hides
-                # exactly the malformed-target failures this loop can hit.
-                if not json_output:
-                    console.print(f"  [yellow]stub skipped[/] {target!r}: {exc}")
         if stubs_created:
             plan = compute_sync_plan(vault)
             execute_sync(vault, plan)
