@@ -54,6 +54,33 @@ class ContentType(StrEnum):
     UNKNOWN = "unknown"
 
 
+# Variation selectors are combining marks (Mn) that only pick how the
+# character before them is drawn, such as U+FE0F after an emoji.
+_VARIATION_SELECTOR = re.compile("[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+
+
+def _marks_on_kept_letters(m: re.Match[str]) -> str:
+    """What slugify keeps of a run it strips: the combining marks at its start
+    when they sit on the letter or digit just before it.
+
+    A mark whose own character is stripped goes with it, and so does a
+    variation selector: kept, the heart emoji (U+2764 U+FE0F) became the
+    invisible id U+FE0F, shared by every such emoji, and a mark left next to
+    another letter made a slug that NFC changed on the next pass.
+    """
+    if m.start() == 0 or not re.match(r"\w", m.string[m.start() - 1]):
+        return ""
+    run = m.group()
+    end = 0
+    while (
+        end < len(run)
+        and unicodedata.category(run[end]).startswith("M")
+        and not _VARIATION_SELECTOR.match(run[end])
+    ):
+        end += 1
+    return run[:end]
+
+
 def slugify(text: str) -> str:
     """Convert text to a URL-friendly slug. Preserves underscores.
 
@@ -68,12 +95,9 @@ def slugify(text: str) -> str:
     original = text
     # Unicode-aware \w (no re.ASCII). \w has no combining marks, which carry
     # the vowel signs and viramas of Devanagari, Tamil and other abugidas:
-    # stripped, 'काम' (work) became 'कम' (less). So marks are kept too.
-    text = re.sub(
-        r"[^\w\s-]",
-        lambda m: m.group() if unicodedata.category(m.group()).startswith("M") else "",
-        text,
-    )
+    # stripped, 'काम' (work) became 'कम' (less). So the marks on a kept
+    # letter are kept too.
+    text = re.sub(r"[^\w\s-]+", _marks_on_kept_letters, text)
     text = re.sub(r"\s+", "-", text)
     text = re.sub(r"-+", "-", text)
     result = text.strip("-")
