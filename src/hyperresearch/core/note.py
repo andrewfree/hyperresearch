@@ -132,6 +132,7 @@ def write_note(
     tier: str | None = None,
     content_type: str | None = None,
     extra_frontmatter: dict | None = None,
+    template_frontmatter: dict | None = None,
     taken_ids: set[str] | None = None,
 ) -> Path:
     """Create a new note file on disk. Returns the file path.
@@ -141,6 +142,11 @@ def write_note(
         tier: Epistemic role — ground_truth|institutional|practitioner|commentary|unknown.
         content_type: Artifact kind — paper|docs|article|blog|forum|dataset|policy|code|book|transcript|review|unknown.
         extra_frontmatter: Additional fields to set on NoteMeta (e.g. source_domain, fetched_at).
+            Keys NoteMeta does not model are dropped.
+        template_frontmatter: A note template's parsed frontmatter. Its keys
+            NoteMeta does not model (a custom template's `authors:`) are
+            written as the template has them, in its key order. Its modeled
+            keys are not read here: pass them as the arguments above.
         taken_ids: Ids to skip even when no file of that name exists, such as
             the ids already in the notes table. A note keeps its id when its
             file is renamed (`note mv`), so `<id>.md` can be free on disk while
@@ -172,6 +178,11 @@ def write_note(
     if extra_frontmatter:
         kwargs.update(extra_frontmatter)
     meta = NoteMeta(**kwargs)
+    if template_frontmatter:
+        meta._extra = {
+            k: v for k, v in template_frontmatter.items() if k not in NoteMeta.model_fields
+        }
+        meta._key_order = list(template_frontmatter)
 
     # Determine output path, avoid collisions. Vault layout is FLAT —
     # `parent:` lives in frontmatter (DB-indexed) but does NOT drive the

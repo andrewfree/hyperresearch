@@ -23,8 +23,8 @@ def note_new(
     body_stdin: bool = typer.Option(False, "--body-stdin", help="Read body from stdin"),
     tags: list[str] = typer.Option([], "--tag", "-t", help="Tags"),
     parent: str | None = typer.Option(None, "--parent", "-p", help="Parent topic"),
-    note_type: str = typer.Option("note", "--type", help="Note type"),
-    status: str = typer.Option("draft", "--status", "-s", help="Initial status"),
+    note_type: str | None = typer.Option(None, "--type", help="Note type (default: note, or the template's)"),
+    status: str | None = typer.Option(None, "--status", "-s", help="Initial status (default: draft, or the template's)"),
     summary: str | None = typer.Option(None, "--summary", help="One-line summary"),
     source: str | None = typer.Option(None, "--source", help="Source URL or path"),
     tier: str | None = typer.Option(None, "--tier", help="Epistemic tier: ground_truth|institutional|practitioner|commentary|unknown"),
@@ -41,9 +41,11 @@ def note_new(
     import sys
     from pathlib import Path as P
 
-    from hyperresearch.core.note import create_note_file, indexed_note_ids, write_note
+    from rich.markup import escape
+
+    from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.vault import Vault
-    from hyperresearch.models.note import ContentType, Tier, slugify
+    from hyperresearch.models.note import ContentType, NoteMeta, Tier, slugify
 
     # Validate enums up-front so invalid values fail clearly
     if tier is not None:
@@ -70,15 +72,14 @@ def note_new(
     vault = Vault.discover()
     vault.auto_sync()
 
-    # Determine body content
+    # Determine body content (None: not given, so a template's body is used)
+    body: str | None = None
     if body_file:
         body = P(body_file).read_text(encoding="utf-8")
     elif body_stdin:
         body = sys.stdin.read()
     elif body_text:
         body = body_text
-    else:
-        body = f"# {title}\n\n"
 
     nid = slugify(title)
 
@@ -96,35 +97,59 @@ def note_new(
             for s in existing:
                 console.print(f"[yellow]Similar note exists:[/] {s['id']} — {s['title']}")
 
-    # Use template if specified
+    # Use template if specified. Its frontmatter gives the defaults: the
+    # options given here win and tags are the union. write_note then picks
+    # the id and writes the YAML, as for a note without a template; the
+    # template was written out as substituted text, so a `"` in the title
+    # broke the YAML and a taken id was written into the file anyway.
+    template_fm: dict | None = None
+    extra: dict = {}
     if template:
         from hyperresearch.core.templates import get_template, render_template
 
         tpl = get_template(template, vault.templates_dir)
         if tpl:
-            rendered = render_template(tpl, title, nid, tags)
-            target_dir = vault.notes_dir
-            if parent:
-                target_dir = target_dir / slugify(parent)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            file_path = target_dir / f"{nid}.md"
-            counter = 2
-            while not create_note_file(file_path, rendered):
-                file_path = target_dir / f"{nid}-{counter}.md"
-                nid = f"{nid}-{counter}"
-                counter += 1
-            path = file_path
+            try:
+                template_fm, template_body = render_template(tpl, title, nid, tags)
+                defaults = NoteMeta.model_validate({"title": title, **template_fm})
+            except ValueError as e:
+                msg = f"Template '{template}' is invalid: {e}"
+                if json_output:
+                    output(error(msg, "INVALID_TEMPLATE"), json_mode=True)
+                else:
+                    console.print(f"[red]{escape(msg)}[/]")
+                raise typer.Exit(1)
+            title = defaults.title
+            tags = list(dict.fromkeys([*defaults.tags, *NoteMeta.lowercase_tags(tags)]))
+            if body is None:
+                body = template_body
+            status = defaults.status if status is None else status
+            note_type = defaults.type if note_type is None else note_type
+            parent = defaults.parent if parent is None else parent
+            summary = defaults.summary if summary is None else summary
+            source = defaults.source if source is None else source
+            tier = defaults.tier if tier is None else tier
+            content_type = defaults.content_type if content_type is None else content_type
+            # Whatever else the template sets that NoteMeta models (aliases, ...).
+            given = {"title", "id", "tags", "status", "type", "parent", "summary",
+                     "source", "tier", "content_type"}
+            extra = {
+                k: getattr(defaults, k)
+                for k in template_fm
+                if k in NoteMeta.model_fields and k not in given
+            }
         else:
             console.print(f"[yellow]Template '{template}' not found, using default.[/]")
-            path = write_note(vault.notes_dir, title, body=body, tags=tags, status=status,
-                              note_type=note_type, parent=parent, summary=summary,
-                              source=source, tier=tier, content_type=content_type,
-                              taken_ids=indexed_note_ids(vault.db))
-    else:
-        path = write_note(vault.notes_dir, title, body=body, tags=tags, status=status,
-                          note_type=note_type, parent=parent, summary=summary,
-                          source=source, tier=tier, content_type=content_type,
-                          taken_ids=indexed_note_ids(vault.db))
+
+    if body is None:
+        body = f"# {title}\n\n"
+    path = write_note(vault.notes_dir, title, body=body, note_id=nid, tags=tags,
+                      status="draft" if status is None else status,
+                      note_type="note" if note_type is None else note_type,
+                      parent=parent, summary=summary,
+                      source=source, tier=tier, content_type=content_type,
+                      extra_frontmatter=extra or None, template_frontmatter=template_fm,
+                      taken_ids=indexed_note_ids(vault.db))
 
     # Sync the new file into the DB so type/tags are indexed immediately
     from hyperresearch.core.sync import compute_sync_plan, execute_sync

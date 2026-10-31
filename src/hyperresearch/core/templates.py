@@ -194,16 +194,72 @@ def list_templates(templates_dir=None) -> list[dict]:
     return templates
 
 
-def render_template(template_str: str, title: str, note_id: str, tags: list[str]) -> str:
-    """Render a template with Jinja2-like variable substitution."""
+def render_template(
+    template_str: str, title: str, note_id: str, tags: list[str]
+) -> tuple[dict, str]:
+    """Fill a template in. Returns (its frontmatter, parsed, and its body).
+
+    The body is filled in as text. The frontmatter is parsed with a bare
+    word standing in for each placeholder, and the values go into the parsed
+    data: substituted as text, a title with a `"` or a tag like `#ai` made
+    the YAML invalid, and the note was written where sync could not read it.
+    A `{{ tags }}` list item becomes the tags themselves.
+
+    Raises ValueError when the template's frontmatter is not a YAML mapping.
+    """
+    import uuid
     from datetime import datetime
 
-    now = datetime.now(UTC).isoformat()
-    tags_str = ", ".join(tags) if tags else ""
+    import yaml
 
-    result = template_str
-    result = result.replace("{{ title }}", title)
-    result = result.replace("{{ id }}", note_id)
-    result = result.replace("{{ tags }}", tags_str)
-    result = result.replace("{{ created }}", now)
-    return result
+    from hyperresearch.core.frontmatter import FRONTMATTER_RE
+
+    values = {
+        "{{ title }}": title,
+        "{{ id }}": note_id,
+        "{{ tags }}": ", ".join(tags),
+        "{{ created }}": datetime.now(UTC).isoformat(),
+    }
+
+    def fill(text: str) -> str:
+        for placeholder, value in values.items():
+            text = text.replace(placeholder, value)
+        return text
+
+    match = FRONTMATTER_RE.match(template_str)
+    if not match:
+        return {}, fill(template_str)
+
+    # A bare alphanumeric word reads as a plain string wherever a placeholder
+    # can stand: quoted, unquoted or inside a flow list.
+    nonce = uuid.uuid4().hex
+    tokens = {placeholder: f"hrtpl{nonce}{i}" for i, placeholder in enumerate(values)}
+    tags_token = tokens["{{ tags }}"]
+    yaml_str = match.group(1)
+    for placeholder, token in tokens.items():
+        yaml_str = yaml_str.replace(placeholder, token)
+    try:
+        data = yaml.safe_load(yaml_str) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"frontmatter is not valid YAML: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError("frontmatter is not a YAML mapping")
+
+    def put(value):
+        if isinstance(value, str):
+            for placeholder, token in tokens.items():
+                value = value.replace(token, values[placeholder])
+            return value
+        if isinstance(value, list):
+            out = []
+            for item in value:
+                if item == tags_token:
+                    out.extend(tags)
+                else:
+                    out.append(put(item))
+            return out
+        if isinstance(value, dict):
+            return {k: put(v) for k, v in value.items()}
+        return value
+
+    return {k: put(v) for k, v in data.items()}, fill(template_str[match.end():])
