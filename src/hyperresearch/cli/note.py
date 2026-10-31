@@ -918,8 +918,11 @@ def note_rm(
     if file_path.exists():
         file_path.unlink()
 
-    # Re-sync to update DB
-    from hyperresearch.core.sync import compute_sync_plan, execute_sync
+    from hyperresearch.core.sync import _delete_note_from_db, compute_sync_plan, execute_sync
+
+    # Delete by id before sync can mistake an unindexed copy for a move.
+    with vault.db:
+        _delete_note_from_db(vault.db, note_id)
 
     plan = compute_sync_plan(vault)
     execute_sync(vault, plan)
