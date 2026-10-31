@@ -98,8 +98,10 @@ MD_PATTERNS = [
     (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
     # Horizontal rule
     (re.compile(r"^---+$", re.MULTILINE), r"<hr>"),
-    # Blockquotes
-    (re.compile(r"^>\s*(.+)$", re.MULTILINE), r"<blockquote>\1</blockquote>"),
+    # Blockquotes. The body is escaped before these patterns run, so the
+    # marker is '&gt;' by now; [ \t] rather than \s keeps a bare '>' line from
+    # pulling the next line into its quote.
+    (re.compile(r"^&gt;[ \t]*(.*)$", re.MULTILINE), r"<blockquote>\1</blockquote>"),
 ]
 
 

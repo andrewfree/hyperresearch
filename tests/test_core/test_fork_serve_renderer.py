@@ -141,3 +141,26 @@ def test_image_with_a_script_url_keeps_only_its_alt_text():
     assert "<img" not in out
     assert "javascript:" not in out
     assert "pic" in out
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("> quoted source line\n\nAfter.\n", "<blockquote>quoted source line</blockquote>"),
+        (">no space\n", "<blockquote>no space</blockquote>"),
+        ("> a & <b> [x](https://example.com)\n", '<blockquote>a &amp; &lt;b&gt; <a href="https://example.com">x</a></blockquote>'),
+    ],
+    ids=["quote", "no-space", "escaped-and-linked"],
+)
+def test_blockquotes_render(body, expected):
+    """The body is escaped before the patterns run, so a quote line starts with
+    '&gt;' by then; a pattern looking for '>' never matched."""
+    assert expected in render_markdown(body)
+
+
+def test_blockquote_marker_counts_only_at_line_start_and_stays_on_its_line():
+    out = render_markdown("a > b\n>\nnext line\n")
+
+    assert out.count("<blockquote>") == 1
+    assert "a &gt; b" in out
+    assert "next line</blockquote>" not in out
