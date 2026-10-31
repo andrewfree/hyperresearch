@@ -8,6 +8,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+class DuplicateURLError(ValueError):
+    """The URL already belongs to a live note."""
+
+
 def existing_live_note_for_url(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
     """Return the ``sources`` row for ``url`` only if it still points at a live note.
 
@@ -96,7 +100,7 @@ def fetch_and_save(
     """Fetch a URL and save as a research note. Returns result dict.
 
     Raises:
-        ValueError: If URL is already fetched.
+        DuplicateURLError: If URL is already fetched.
         RuntimeError: If fetch fails, or sync does not index the new note.
     """
     prov = prepare_fetch(vault, url, provider_name=provider_name, visible=visible)
@@ -121,7 +125,7 @@ def prepare_fetch(
     connection was opened (#118).
 
     Raises:
-        ValueError: If URL is already fetched.
+        DuplicateURLError: If URL is already fetched.
     """
     from hyperresearch.web.base import get_provider
 
@@ -130,7 +134,7 @@ def prepare_fetch(
     # Check if URL already fetched (an orphaned row — note deleted — is not a duplicate)
     existing = existing_live_note_for_url(conn, url)
     if existing:
-        raise ValueError(f"URL already fetched as note '{existing['note_id']}'")
+        raise DuplicateURLError(f"URL already fetched as note '{existing['note_id']}'")
 
     # Auto-visible for sites that kill headless sessions on first contact
     if not visible and vault.config.web_profile:
