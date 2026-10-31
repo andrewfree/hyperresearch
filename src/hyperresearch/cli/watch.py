@@ -34,10 +34,11 @@ def watch(
             self._last_event = 0.0
 
         def on_any_event(self, event: FileSystemEvent):
-            if not event.src_path.endswith(".md"):
-                return
+            # An atomic save writes a temp file and renames it over the note,
+            # so the note's path is only the move's destination.
+            paths = (event.src_path, getattr(event, "dest_path", "") or "")
             # Skip .hyperresearch directory
-            if ".hyperresearch" in event.src_path:
+            if not any(p.endswith(".md") and ".hyperresearch" not in p for p in paths):
                 return
             self._pending = True
             self._last_event = time.monotonic()
