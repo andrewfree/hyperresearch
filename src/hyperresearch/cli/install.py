@@ -266,6 +266,13 @@ def install(
     root = Path(path).resolve()
     _require_directory(root)
 
+    # Validate the gear before anything is written, the vault included: run
+    # after Vault.init, a typo left a new vault behind with the error.
+    project_config = root / ".hyperresearch" / "config.toml"
+    project_config_path = project_config if project_config.exists() else None
+    project_profile = _default_profile(project_config_path)
+    _check_profile(project_profile, project_config_path)
+
     # First-time install in an interactive terminal → run the setup TUI instead
     # (The setup TUI configures a Claude Code install; other targets skip it.)
     is_new = not (root / ".hyperresearch").exists()
@@ -295,12 +302,6 @@ def install(
     from hyperresearch.core.agent_docs import _resolve_executable, inject_agent_docs
 
     hpr_path = _resolve_executable()
-
-    # Validate the gear before any per-target file is written.
-    project_config = root / ".hyperresearch" / "config.toml"
-    project_config_path = project_config if project_config.exists() else None
-    project_profile = _default_profile(project_config_path)
-    _check_profile(project_profile, project_config_path)
 
     doc_actions: list[str] = []
     hook_actions: list[str] = []
