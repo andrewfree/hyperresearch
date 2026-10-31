@@ -26,7 +26,7 @@ runner = CliRunner()
     [
         "efield-dft-sac-3f9a1c",
         "non-ai-web-design-trends-2026-b0dbbe",
-        "Run_2026.09.12",
+        "run_2026.09.12",
         "a",
         "x" * 100,
     ],
@@ -38,6 +38,7 @@ def test_slugs_pass(tag):
 @pytest.mark.parametrize(
     "tag",
     [
+        "Run_2026.09.12",
         "../../x",
         "..",
         ".",

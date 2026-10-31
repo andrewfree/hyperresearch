@@ -25,7 +25,7 @@ class InvalidRunTagError(VaultError):
 # A run tag is a slug: what `hpr vault-tag` mints, plus underscore and dot so
 # hand-written tags survive. No separators, so it can only ever name a child
 # of research/runs/; the leading character rule rejects `.` and `..`.
-RUN_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+RUN_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,99}$")
 
 
 def validate_run_tag(vault_tag: str) -> str:
@@ -38,7 +38,7 @@ def validate_run_tag(vault_tag: str) -> str:
     """
     if not isinstance(vault_tag, str) or not RUN_TAG_RE.fullmatch(vault_tag):
         raise InvalidRunTagError(
-            f"invalid run tag {vault_tag!r}: a tag is a slug of letters, digits, "
+            f"invalid run tag {vault_tag!r}: a tag is a slug of lowercase letters, digits, "
             "'-', '_' and '.', starting with a letter or digit (mint one with "
             "`hyperresearch vault-tag <slug>`)"
         )
@@ -114,6 +114,9 @@ class Vault:
 
     def run_dir(self, vault_tag: str) -> Path:
         return self.runs_dir / validate_run_tag(vault_tag)
+
+    def final_report_path(self, vault_tag: str) -> Path:
+        return self.notes_dir / f"final_report_{validate_run_tag(vault_tag)}.md"
 
     @property
     def templates_dir(self) -> Path:

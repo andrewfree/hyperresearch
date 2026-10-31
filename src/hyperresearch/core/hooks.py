@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -38,9 +37,11 @@ def _set_render_state(
     profile_name: str, config_path: Path | None, platform: str = "claude"
 ) -> None:
     global _RENDER_STATE
+    from hyperresearch.core.config import VaultConfig
     from hyperresearch.core.render import build_render_context
 
     _RENDER_STATE = {
+        "research_dir": VaultConfig.load(config_path).research_dir if config_path else "research",
         "profile_name": profile_name,
         "platform": platform,
         "context": build_render_context(config_path, primary=profile_name, platform=platform),
@@ -68,6 +69,11 @@ def _render_installed(
 
     state = _get_render_state()
     rendered = render_prompt(content, state["context"])
+    rendered = re.sub(
+        r"(?<![\w./-])research/",
+        lambda _: state["research_dir"].rstrip("/") + "/",
+        rendered,
+    )
     rendered = rendered.replace("{hpr_path}", hpr_path.replace("\\", "/"))
     if not header:
         return rendered
@@ -3872,11 +3878,11 @@ def _hook_command(hook_path: Path) -> str:
     Claude Code runs the command through a shell. Double quotes keep a path
     with spaces together, and are what earlier installs wrote, but the shell
     still expands `$`, backticks and backslashes inside them, so a path with
-    one of those is single-quoted instead. Windows keeps double quotes: its
-    paths cannot hold `"`, and cmd does not treat single quotes as quoting.
+    one of those is single-quoted instead. This also applies on Windows,
+    where Claude Code runs hooks through Git Bash.
     """
     path = hook_path.as_posix()
-    if sys.platform != "win32" and any(ch in path for ch in '$`\\"'):
+    if any(ch in path for ch in '$`\\"'):
         return f"node {shlex.quote(path)}"
     return f'node "{path}"'
 

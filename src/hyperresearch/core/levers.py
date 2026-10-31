@@ -262,24 +262,31 @@ def _decomposition_path(vault, vault_tag: str):
     return vault.run_dir(vault_tag) / "prompt-decomposition.json"
 
 
-def read_levers(vault, vault_tag: str) -> dict:
-    """Levers block from the run's decomposition; defaults when absent."""
+def _read_decomposition(vault, vault_tag: str) -> dict:
     dpath = _decomposition_path(vault, vault_tag)
     if not dpath.exists():
         raise LeverError(f"no prompt-decomposition.json for run '{vault_tag}' ({dpath})")
     try:
         decomp = json.loads(dpath.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
+    except (OSError, ValueError) as e:
         raise LeverError(f"corrupt prompt-decomposition.json: {e}") from e
+    if not isinstance(decomp, dict):
+        raise LeverError("prompt-decomposition.json must be an object")
+    if not isinstance(decomp.get("levers") or {}, dict):
+        raise LeverError("levers must be an object")
+    return decomp
+
+
+def read_levers(vault, vault_tag: str) -> dict:
+    """Levers block from the run's decomposition; defaults when absent."""
+    decomp = _read_decomposition(vault, vault_tag)
     return validate_levers(decomp.get("levers") or {})
 
 
 def set_levers(vault, vault_tag: str, updates: dict) -> dict:
     """Update the decomposition's levers block in place. Returns resolved levers."""
     dpath = _decomposition_path(vault, vault_tag)
-    if not dpath.exists():
-        raise LeverError(f"no prompt-decomposition.json for run '{vault_tag}' ({dpath})")
-    decomp = json.loads(dpath.read_text(encoding="utf-8"))
+    decomp = _read_decomposition(vault, vault_tag)
     levers = {**(decomp.get("levers") or {}), **updates}
     resolved = validate_levers(levers)  # raises before any write
     decomp["levers"] = levers

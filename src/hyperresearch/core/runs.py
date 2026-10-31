@@ -164,7 +164,10 @@ def manifest_lock(vault, vault_tag: str) -> Iterator[None]:
     except OSError as e:
         raise RunError(f"cannot lock run '{vault_tag}': {e}") from e
     try:
-        _lock_file(fd)
+        try:
+            _lock_file(fd)
+        except OSError as e:
+            raise RunError(f"cannot lock run '{vault_tag}': {e}") from e
         held[key] = 1
         try:
             yield
@@ -280,6 +283,11 @@ def _read_manifest(mpath: Path, vault_tag: str) -> dict:
     bad = [k for k, kind in _REQUIRED_FIELDS.items() if not isinstance(manifest.get(k), kind)]
     if bad:
         raise RunError(f"corrupt manifest for run '{vault_tag}': missing or invalid {bad}")
+    if manifest["vault_tag"] != vault_tag:
+        raise RunError(
+            f"run tag collision: requested {vault_tag!r}, manifest belongs to "
+            f"{manifest['vault_tag']!r}"
+        )
     return manifest
 
 
@@ -604,6 +612,24 @@ def latest_run_tag(vault) -> str | None:
     return runs[0]["vault_tag"] if runs else None
 
 
+def resume_run(vault, vault_tag: str) -> dict:
+    """Resume under the manifest lock, leaving reporting paths read-only."""
+    manifest = load_manifest(vault, vault_tag)
+    if manifest["status"] not in ("paused", "blocked", "failed"):
+        return manifest
+    try:
+        with manifest_lock(vault, vault_tag):
+            # Another resume or abort may have won while we waited for the lock.
+            manifest = load_manifest(vault, vault_tag)
+            if manifest["status"] == "blocked" and manifest.get("blocked_on") in _COUNT_BLOCK_REASONS:
+                return clear_count_block(vault, vault_tag)
+            if manifest["status"] in ("paused", "blocked", "failed"):
+                return set_status(vault, vault_tag, "running")
+            return manifest
+    except OSError as e:
+        raise RunError(f"cannot resume run '{vault_tag}': {e}") from e
+
+
 def resume_position(manifest: dict, required_steps: set[str] | None = None) -> dict:
     """Compute where a run should continue.
 
@@ -803,7 +829,7 @@ def verify_run(vault, vault_tag: str) -> dict:
     def check(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
 
-    report_path = vault.root / "research" / "notes" / f"final_report_{vault_tag}.md"
+    report_path = vault.final_report_path(vault_tag)
     check("report-exists", report_path.exists(), str(report_path))
 
     report_text = ""
