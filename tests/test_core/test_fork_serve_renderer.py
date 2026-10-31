@@ -164,3 +164,19 @@ def test_blockquote_marker_counts_only_at_line_start_and_stays_on_its_line():
     assert out.count("<blockquote>") == 1
     assert "a &gt; b" in out
     assert "next line</blockquote>" not in out
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("[[Tom & Jerry]]", '<a href="/note/tom-jerry" class="wiki-link">Tom &amp; Jerry</a>'),
+        ("[[Tom & Jerry|cartoon]]", '<a href="/note/tom-jerry" class="wiki-link">cartoon</a>'),
+        # sync strips a trailing backslash (shell escaping) from the ref it stores
+        ("[[Tom & Jerry\\]]", '<a href="/note/tom-jerry" class="wiki-link">Tom &amp; Jerry\\</a>'),
+        ("[[Elsewhere]]", '<a href="/note/Elsewhere" class="wiki-link">Elsewhere</a>'),
+    ],
+    ids=["resolved", "resolved-display", "trailing-backslash", "unresolved"],
+)
+def test_wiki_link_uses_the_resolved_note_id(body, expected):
+    """Refs are looked up as sync stored them: unescaped text."""
+    assert expected in render_markdown(body, {"Tom & Jerry": "tom-jerry"})

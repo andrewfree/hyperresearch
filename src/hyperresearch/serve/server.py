@@ -496,7 +496,15 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             (note_id,),
         ).fetchall()
 
-        html_body = render_markdown(row["body"])
+        # Sync resolved each ref by id, title, alias or case; link to its result.
+        resolved = {
+            r["target_ref"]: r["target_id"]
+            for r in self.db.execute(
+                "SELECT target_ref, target_id FROM links WHERE source_id = ? AND target_id IS NOT NULL",
+                (note_id,),
+            )
+        }
+        html_body = render_markdown(row["body"], resolved)
         # `note new --body` and MCP create_note store the body as given, with
         # no "# Title" line, so show the title unless the body opens with one.
         first_line = next((line for line in row["body"].splitlines() if line.strip()), "")

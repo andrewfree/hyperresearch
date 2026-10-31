@@ -142,3 +142,42 @@ def test_note_links_still_open_their_notes(tmp_vault, viewer):
         status, page = _get(viewer, _browser_request_target(href))
         assert status == 200
         assert re.search(r"<title>(Café Notes|Plain) \|", page)
+
+
+def _wiki_hrefs(page: str) -> list[str]:
+    return re.findall(r'<a href="([^"]*)" class="wiki-link">', page)
+
+
+def test_wiki_links_go_where_sync_resolved_them(tmp_vault, viewer):
+    """Sync resolves a ref by id, case-insensitive id, alias or title, and the
+    backlinks panel shows those links; the rendered href used the raw text."""
+    write_note(
+        tmp_vault.notes_dir, "Target Note", body="target body\n", extra_frontmatter={"aliases": ["TN"]}
+    )
+    write_note(
+        tmp_vault.notes_dir,
+        "Linker",
+        body="See [[Target Note]], [[TARGET-NOTE]], [[target-note]], [[TN]] and [[Target Note|the target]].\n",
+    )
+    _sync(tmp_vault)
+
+    _, page = _get(viewer, "/note/linker")
+    hrefs = _wiki_hrefs(page)
+
+    assert hrefs == ["/note/target-note"] * 5
+    status, target = _get(viewer, _browser_request_target(hrefs[0]))
+    assert status == 200
+    assert "target body" in target
+
+
+def test_unresolved_wiki_link_href_carries_its_whole_text(tmp_vault, viewer):
+    write_note(tmp_vault.notes_dir, "Linker", body="See [[Missing Thing]] and [[what?]].\n")
+    _sync(tmp_vault)
+
+    _, page = _get(viewer, "/note/linker")
+    hrefs = _wiki_hrefs(page)
+
+    assert hrefs == ["/note/Missing%20Thing", "/note/what%3F"]
+    status, missing = _get(viewer, _browser_request_target(hrefs[1]))
+    assert status == 404
+    assert "Note not found: what?" in missing
