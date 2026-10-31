@@ -6,10 +6,11 @@ import os
 import stat
 from datetime import UTC
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
-from hyperresearch.cli._output import console, output, print_note_summary
+from hyperresearch.cli._output import console, discover_vault, output, print_note_summary
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -44,10 +45,28 @@ def note_new(
     from rich.markup import escape
 
     from hyperresearch.core.note import indexed_note_ids, write_note
-    from hyperresearch.core.vault import Vault
-    from hyperresearch.models.note import ContentType, NoteMeta, Tier, slugify
+    from hyperresearch.models.note import ContentType, NoteMeta, NoteStatus, NoteType, Tier, slugify
+
+    def fail(msg: str, code: str) -> NoReturn:
+        if json_output:
+            output(error(msg, code), json_mode=True)
+        else:
+            console.print(f"[red]{escape(msg)}[/]")
+        raise typer.Exit(1)
 
     # Validate enums up-front so invalid values fail clearly
+    if status is not None:
+        try:
+            NoteStatus(status)
+        except ValueError:
+            valid = ", ".join(s.value for s in NoteStatus)
+            fail(f"Invalid --status '{status}'. Must be one of: {valid}", "INVALID_STATUS")
+    if note_type is not None:
+        try:
+            NoteType(note_type)
+        except ValueError:
+            valid = ", ".join(t.value for t in NoteType)
+            fail(f"Invalid --type '{note_type}'. Must be one of: {valid}", "INVALID_TYPE")
     if tier is not None:
         try:
             Tier(tier)
@@ -69,13 +88,18 @@ def note_new(
                 console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     # Determine body content (None: not given, so a template's body is used)
     body: str | None = None
     if body_file:
-        body = P(body_file).read_text(encoding="utf-8")
+        try:
+            body = P(body_file).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            fail(f"Body file not found: {body_file}", "FILE_NOT_FOUND")
+        except (OSError, UnicodeDecodeError) as e:
+            fail(f"Cannot read body file {body_file}: {e}", "FILE_UNREADABLE")
     elif body_stdin:
         body = sys.stdin.read()
     elif body_text:
@@ -103,6 +127,7 @@ def note_new(
     # template was written out as substituted text, so a `"` in the title
     # broke the YAML and a taken id was written into the file anyway.
     template_fm: dict | None = None
+    template_warning: str | None = None
     extra: dict = {}
     if template:
         from hyperresearch.core.templates import get_template, render_template
@@ -113,12 +138,7 @@ def note_new(
                 template_fm, template_body = render_template(tpl, title, nid, tags)
                 defaults = NoteMeta.model_validate({"title": title, **template_fm})
             except ValueError as e:
-                msg = f"Template '{template}' is invalid: {e}"
-                if json_output:
-                    output(error(msg, "INVALID_TEMPLATE"), json_mode=True)
-                else:
-                    console.print(f"[red]{escape(msg)}[/]")
-                raise typer.Exit(1)
+                fail(f"Template '{template}' is invalid: {e}", "INVALID_TEMPLATE")
             title = defaults.title
             tags = list(dict.fromkeys([*defaults.tags, *NoteMeta.lowercase_tags(tags)]))
             if body is None:
@@ -139,7 +159,11 @@ def note_new(
                 if k in NoteMeta.model_fields and k not in given
             }
         else:
-            console.print(f"[yellow]Template '{template}' not found, using default.[/]")
+            # Under --json the warning goes into the envelope: printed, it
+            # came ahead of the JSON on stdout and the output did not parse.
+            template_warning = f"Template '{template}' not found, using default."
+            if not json_output:
+                console.print(f"[yellow]{escape(template_warning)}[/]")
 
     if body is None:
         body = f"# {title}\n\n"
@@ -168,6 +192,8 @@ def note_new(
         if similar:
             data["warning"] = f"Similar note already exists: {similar[0]['id']}"
             data["similar"] = [{"id": r["id"], "title": r["title"]} for r in similar]
+        if template_warning:
+            data["template_warning"] = template_warning
         top_tags = vault.db.execute(
             "SELECT tag, COUNT(*) as c FROM tags GROUP BY tag ORDER BY c DESC LIMIT 30"
         ).fetchall()
@@ -193,9 +219,7 @@ def note_show(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Display one or more notes. Pass multiple IDs for batch read."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     def _fetch_note(nid: str) -> dict | None:
@@ -331,7 +355,6 @@ def note_list(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """List notes with optional filters."""
-    from hyperresearch.core.vault import Vault
     from hyperresearch.models.note import ContentType, Tier
 
     # Validate enums up-front
@@ -356,7 +379,7 @@ def note_list(
                 console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     clauses = []
@@ -435,9 +458,7 @@ def note_edit(
     import os
     import subprocess
 
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault()
     vault.auto_sync()
 
     row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -469,7 +490,6 @@ def note_update(
 
     from hyperresearch.core.frontmatter import parse_frontmatter, serialize_frontmatter
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
-    from hyperresearch.core.vault import Vault
     from hyperresearch.models.note import ContentType, NoteStatus, Tier
 
     # Validate enums up-front
@@ -504,7 +524,7 @@ def note_update(
                 console.print(f"[red]Invalid --content-type '{set_content_type}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -593,9 +613,8 @@ def note_mv(
 
     from hyperresearch.core.claims import _under
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
-    from hyperresearch.core.vault import Vault
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -703,9 +722,7 @@ def note_rm(
     A file that cannot be removed does not stop the delete; it is reported
     under `assets_not_removed`.
     """
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     row = vault.db.execute(
         "SELECT path FROM notes WHERE id = ?", (note_id,)
     ).fetchone()

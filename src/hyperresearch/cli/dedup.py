@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.core.similarity import (
     jaccard,
     lsh_candidates,
@@ -20,17 +20,7 @@ def dedup(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Find near-duplicate notes by content similarity."""
-    from hyperresearch.core.vault import Vault, VaultError
-
-    try:
-        vault = Vault.discover()
-    except VaultError as e:
-        if json_output:
-            output({"ok": False, "error": str(e)}, json_mode=True)
-        else:
-            console.print(f"[red]Error:[/] {e}")
-        raise typer.Exit(1)
-
+    vault = discover_vault(json_output)
     vault.auto_sync()
     cfg = vault.config.dedup
     if threshold is None:
