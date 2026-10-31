@@ -265,6 +265,89 @@ def preprocess_query(raw: str) -> str:
     return " AND ".join(processed)
 
 
+# FTS5's snippet() scores every candidate window against every phrase
+# instance in the column, so its cost grows with the square of the matches in
+# one body: a prefix query over a 5 MB note took minutes. A body longer than
+# this gets its snippet from an excerpt of this many characters instead.
+_SNIPPET_MAX_CHARS = 16_000
+_SNIPPET_SQL = "snippet(notes_fts, 2, '>>>', '<<<', '...', 64)"
+# A quoted phrase or a bareword of the FTS5 query, to find a first match.
+_QUERY_PART_RE = re.compile(r'"([^"]*)"|([^\W_]+)')
+_WORD_RE = re.compile(r"[^\W_]+")
+
+
+def _first_match(body: str, fts_query: str) -> int:
+    """Offset of the first literal occurrence of any query phrase, else 0.
+
+    Only places the excerpt: the tokenizer also stems, so a stemmed-only match
+    falls back to the start of the body.
+    """
+    patterns = []
+    for phrase, word in _QUERY_PART_RE.findall(fts_query):
+        if word in _BINARY_OPERATORS or word == "NEAR":
+            continue
+        tokens = _WORD_RE.findall(phrase or word)
+        if tokens:
+            patterns.append(r"[\W_]+".join(map(re.escape, tokens)))
+    if not patterns:
+        return 0
+    m = re.search(r"(?<![^\W_])(?:" + "|".join(patterns) + ")", body, re.IGNORECASE)
+    return m.start() if m else 0
+
+
+def _excerpt_snippet(conn: sqlite3.Connection, fts_query: str, rowid: int) -> str:
+    """snippet() for a body over _SNIPPET_MAX_CHARS, run on a copy of the row
+    whose body is cut to an excerpt starting shortly before the first match.
+
+    The copy lives in a throwaway in-memory table built from the vault's own
+    notes_fts definition, so tokenizing and highlighting match snippet().
+    """
+    row = conn.execute(
+        "SELECT title, body_plain, tags, aliases FROM notes_fts WHERE rowid = ?", (rowid,)
+    ).fetchone()
+    body = row[1] or ""
+    start = max(0, _first_match(body, fts_query) - _SNIPPET_MAX_CHARS // 4)
+    end = min(len(body), start + _SNIPPET_MAX_CHARS)
+    # Cut at whitespace so no word is split into a token the body does not hold.
+    if start > 0:
+        space = body.find(" ", start)
+        start = space + 1 if 0 <= space < end else start
+    if end < len(body):
+        space = body.rfind(" ", start, end)
+        end = space if space > start else end
+    excerpt = body[start:end]
+
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'"
+    ).fetchone()[0]
+    scratch = sqlite3.connect(":memory:")
+    try:
+        scratch.execute(schema)
+        scratch.execute(
+            "INSERT INTO notes_fts (title, body_plain, tags, aliases) VALUES (?, ?, ?, ?)",
+            (row[0], excerpt, row[2], row[3]),
+        )
+        hit = scratch.execute(
+            f"SELECT {_SNIPPET_SQL} FROM notes_fts WHERE notes_fts MATCH ?", (fts_query,)
+        ).fetchone()
+    finally:
+        scratch.close()
+
+    if hit:
+        snippet = hit[0]
+    else:
+        # The match lies outside the excerpt: show its start, as snippet()
+        # does for a body the query does not match.
+        words = excerpt.split()
+        snippet = " ".join(words[:64]) + ("..." if len(words) > 64 else "")
+    # snippet() marks only the excerpt's own edges as cut.
+    if start > 0 and not snippet.startswith("..."):
+        snippet = "..." + snippet
+    if end < len(body) and not snippet.endswith("..."):
+        snippet += "..."
+    return snippet
+
+
 def _fts_rejects(conn: sqlite3.Connection, fts_query: str) -> bool:
     """True when FTS5 rejects this MATCH expression on an index that works.
 
@@ -350,7 +433,11 @@ def search_fts(
 
     source = "notes n" if filter_only else "notes_fts fts JOIN notes n ON fts.id = n.id"
     match = "1=1" if filter_only else "notes_fts MATCH ?"
-    snippet = "COALESCE(n.summary, '')" if filter_only else "snippet(notes_fts, 2, '>>>', '<<<', '...', 64)"
+    # A long body's snippet stays NULL here and is built from an excerpt below.
+    snippet = "COALESCE(n.summary, '')" if filter_only else (
+        f"CASE WHEN length(fts.body_plain) <= {_SNIPPET_MAX_CHARS} THEN {_SNIPPET_SQL} END"
+    )
+    fts_rowid = "NULL" if filter_only else "fts.rowid"
     score = "0.0" if filter_only else " * ".join(
         [f"abs(bm25(notes_fts, 0.0, {tw}, {bw}, {tgw}, {aw}))", *score_factors]
     )
@@ -361,6 +448,7 @@ def search_fts(
             n.quality_score, n.doi, n.venue, n.citation_count, n.is_retracted, n.oa_version,
             n.created, n.updated, n.word_count, n.summary,
             {snippet} as snippet,
+            {fts_rowid} as fts_rowid,
             {score} as score,
             (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM {source}
@@ -385,6 +473,9 @@ def search_fts(
     results = []
     for row in rows:
         tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        snippet = row["snippet"]
+        if snippet is None and not filter_only:
+            snippet = _excerpt_snippet(conn, fts_query, row["fts_rowid"])
         results.append({
             "id": row["id"],
             "title": row["title"],
@@ -406,7 +497,7 @@ def search_fts(
             "summary": row["summary"],
             "quality_score": row["quality_score"] if "quality_score" in row.keys() else None,  # noqa: SIM118
             "score": row["score"],
-            "snippet": row["snippet"] or "",
+            "snippet": snippet or "",
         })
 
     return results
