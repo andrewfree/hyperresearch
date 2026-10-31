@@ -88,3 +88,39 @@ def test_port_is_reclaimed_right_after_the_previous_server_closed(tmp_vault, mon
 
     with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as second:
         assert second.server_address == ("127.0.0.1", port)
+
+
+def _status_line(client: socket.socket) -> str:
+    try:
+        client.sendall(b"GET /api/graph HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+        with client.makefile("rb") as reader:
+            return reader.readline().decode("latin-1").strip()
+    except OSError as e:
+        return type(e).__name__
+
+
+def test_burst_of_clients_waits_in_the_queue_instead_of_being_reset(tmp_vault, monkeypatch):
+    """Connections that arrive before the server accepts them wait in the
+    listen queue. socketserver's default queue of 5 made macOS reset every
+    connection past the first handful, so a burst of 32 clients mostly
+    failed with ECONNRESET."""
+    monkeypatch.setattr(HyperresearchHandler, "vault", tmp_vault)
+    with HyperresearchServer(("127.0.0.1", 0), HyperresearchHandler) as server:
+        clients, refused = [], []
+        for _ in range(64):
+            try:
+                clients.append(socket.create_connection(server.server_address, timeout=2))
+            except OSError as e:
+                refused.append(type(e).__name__)
+        serving = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05})
+        serving.start()
+        try:
+            statuses = [_status_line(client) for client in clients]
+        finally:
+            server.shutdown()
+            serving.join(5)
+            for client in clients:
+                client.close()
+
+    assert refused == []
+    assert statuses == ["HTTP/1.0 200 OK"] * 64
