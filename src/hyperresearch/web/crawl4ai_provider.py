@@ -504,6 +504,7 @@ class Crawl4AIProvider:
                 )
                 continue
             if pdf_result is not None:
+                pdf_result.requested_url = url
                 web_results.append(pdf_result)
             else:
                 failed_pdf_urls.append(url)
@@ -559,6 +560,7 @@ class Crawl4AIProvider:
                             log.warning("SKIPPED (TLS certificate invalid): %s (%s)", url, exc)
                             continue
                         if pdf_result is not None:
+                            pdf_result.requested_url = url
                             web_results.append(pdf_result)
                             continue
 
@@ -576,6 +578,7 @@ class Crawl4AIProvider:
 
                     web_results.append(WebResult(
                         url=cr.url or url,
+                        requested_url=url,
                         title=metadata.get("title", ""),
                         content=content,
                         raw_html=cr.html,
