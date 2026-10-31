@@ -28,6 +28,15 @@ def fetch_batch(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Fetch multiple URLs and save each as a research note. Batched sync for speed."""
+    from hyperresearch.cli.fetch import (
+        _detect_content_type,
+        _detect_tier,
+        _escalate_blocked,
+        _junk_escalation_reason,
+        _load_provider,
+        _save_raw_file,
+        _url_parse_error,
+    )
     from hyperresearch.core.enrich import enrich_note_file
     from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.oa import (
@@ -38,16 +47,7 @@ def fetch_batch(
     )
     from hyperresearch.core.scholar import extract_doi
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
-    from hyperresearch.cli.fetch import (
-        _detect_content_type,
-        _detect_tier,
-        _escalate_blocked,
-        _junk_escalation_reason,
-        _save_raw_file,
-        _url_parse_error,
-    )
     from hyperresearch.core.vault import Vault, VaultError
-    from hyperresearch.web.base import get_provider
     from hyperresearch.web.pdf import PDF_FAILURE_KEY
 
     # Collect URLs from args and/or stdin
@@ -103,13 +103,7 @@ def fetch_batch(
         domain = urlparse(fetch_url).netloc.lower()
         return any(d in domain for d in vault.config.fetch.visible_browser_domains)
 
-    prov = get_provider(
-        provider_name or vault.config.web_provider,
-        profile=vault.config.web_profile,
-        magic=vault.config.web_magic,
-        settings=vault.config.fetch,
-        gates=vault.config.junk,
-    )
+    prov = _load_provider(vault, provider_name, json_output)
 
     # Filter out already-fetched URLs
     new_urls = []
@@ -178,14 +172,7 @@ def fetch_batch(
 
     # Fetch auth-aggressive URLs with visible browser (sequential)
     if visible_urls:
-        visible_prov = get_provider(
-            provider_name or vault.config.web_provider,
-            profile=vault.config.web_profile,
-            magic=vault.config.web_magic,
-            headless=False,
-            settings=vault.config.fetch,
-            gates=vault.config.junk,
-        )
+        visible_prov = _load_provider(vault, provider_name, json_output, headless=False)
         for url in visible_urls:
             _fetch_one(visible_prov, url, "visible")
 

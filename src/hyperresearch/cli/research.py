@@ -30,11 +30,11 @@ def research(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Deep research: search the web, fetch results, save as linked notes, generate synthesis."""
+    from hyperresearch.cli.fetch import _load_provider
     from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
     from hyperresearch.core.vault import Vault, VaultError
     from hyperresearch.models.note import slugify
-    from hyperresearch.web.base import get_provider
 
     try:
         vault = Vault.discover()
@@ -47,13 +47,7 @@ def research(
 
     vault.auto_sync()
     conn = vault.db
-    prov = get_provider(
-        provider_name or vault.config.web_provider,
-        profile=vault.config.web_profile,
-        magic=vault.config.web_magic,
-        settings=vault.config.fetch,
-        gates=vault.config.junk,
-    )
+    prov = _load_provider(vault, provider_name, json_output)
 
     # Step 1: Search
     if not json_output:
