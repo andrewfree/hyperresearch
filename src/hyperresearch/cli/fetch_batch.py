@@ -38,7 +38,13 @@ def fetch_batch(
     )
     from hyperresearch.core.scholar import extract_doi
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
-    from hyperresearch.cli.fetch import _escalate_blocked, _junk_escalation_reason
+    from hyperresearch.cli.fetch import (
+        _detect_content_type,
+        _detect_tier,
+        _escalate_blocked,
+        _junk_escalation_reason,
+        _save_raw_file,
+    )
     from hyperresearch.core.vault import Vault, VaultError
     from hyperresearch.web.base import get_provider
     from hyperresearch.web.pdf import PDF_FAILURE_KEY
@@ -233,7 +239,8 @@ def fetch_batch(
     failed_urls[:] = [f for f in failed_urls if f["url"] not in rescued_urls]
 
     # Phase 1: Write all note files to disk (no sync yet)
-    note_files = []  # (note_path, url, result, domain, content_hash, oa_location, rescue_reason)
+    # (note_path, url, result, domain, content_hash, oa_location, rescue_reason, raw_file)
+    note_files = []
     # Ids written in this batch exist on disk, which write_note checks itself.
     taken_ids = indexed_note_ids(conn)
     for url, result, oa_location, rescue_reason in pending:
@@ -255,6 +262,8 @@ def fetch_batch(
 
         title = result.title or urlparse(url).path.split("/")[-1] or "Untitled"
         domain = original_domain
+        detected_content_type = _detect_content_type(url, result.raw_content_type)
+        detected_tier = _detect_tier(url, detected_content_type)
 
         extra_meta = {
             "source": url,
@@ -288,16 +297,21 @@ def fetch_batch(
             status="draft",
             source=url,
             parent=parent,
+            tier=detected_tier,
+            content_type=detected_content_type,
             extra_frontmatter=extra_meta,
             taken_ids=taken_ids,
         )
 
         # Auto-enrich before sync
         enrich_note_file(note_path, conn, tags)
+        # After enrich, which rewrites the frontmatter
+        raw_file_path = _save_raw_file(vault, note_path, result)
 
         content_hash = hashlib.sha256(result.content.encode("utf-8")).hexdigest()[:16]
         note_files.append(
-            (note_path, url, result, domain, content_hash, oa_location, rescue_reason)
+            (note_path, url, result, domain, content_hash, oa_location, rescue_reason,
+             raw_file_path)
         )
 
         if not json_output:
@@ -323,7 +337,7 @@ def fetch_batch(
     # whose inserts open a transaction the clean-up's re-sync cannot nest in.
     indexed_files = []
     for entry in note_files:
-        refused = discard_unindexed_note(vault, entry[0])
+        refused = discard_unindexed_note(vault, entry[0], entry[7])
         if refused is None:
             indexed_files.append(entry)
             continue
@@ -334,8 +348,10 @@ def fetch_batch(
 
     # Phase 3: Bulk-insert source records
     created_notes = []
-    lost_races = []  # (note_path, url, winner note id)
-    for note_path, url, result, domain, content_hash, oa_location, rescue_reason in note_files:
+    lost_races = []  # (note_path, raw_file, url, winner note id)
+    for (
+        note_path, url, result, domain, content_hash, oa_location, rescue_reason, raw_file_path,
+    ) in note_files:
         note_id = note_path.stem
         conn.execute(
             """INSERT OR IGNORE INTO sources (url, note_id, domain, fetched_at, provider, content_hash)
@@ -351,7 +367,7 @@ def fetch_batch(
         # keeps the url and this batch's note goes.
         winner = conn.execute("SELECT note_id FROM sources WHERE url = ?", (url,)).fetchone()
         if winner is not None and winner["note_id"] != note_id:
-            lost_races.append((note_path, url, winner["note_id"]))
+            lost_races.append((note_path, raw_file_path, url, winner["note_id"]))
             continue
 
         # Save assets if requested
@@ -371,6 +387,7 @@ def fetch_batch(
             "url": url,
             "domain": domain,
             "word_count": len(result.content.split()),
+            "raw_file": raw_file_path,
         }
         if oa_location is not None:
             entry["oa"] = {
@@ -389,8 +406,10 @@ def fetch_batch(
     # Drop the race losers after the commit: the re-sync cannot run inside the
     # transaction Phase 3's inserts opened.
     if lost_races:
-        for note_path, url, winner_id in lost_races:
+        for note_path, raw_file_path, url, winner_id in lost_races:
             note_path.unlink(missing_ok=True)
+            if raw_file_path:
+                (vault.root / "research" / raw_file_path).unlink(missing_ok=True)
             if not json_output:
                 console.print(f"  [dim]Skip:[/] {url} (already fetched as {winner_id})")
         plan = compute_sync_plan(vault)
