@@ -123,23 +123,28 @@ def fetch_batch(
     results = []
     failed_urls: list[dict] = []  # surfaced in JSON output so callers see what was lost
 
+    def _fail(url: str, error: str, kind: str) -> None:
+        failed_urls.append({"url": url, "error": error, "phase": kind})
+        if not json_output:
+            console.print(f"  [red]Failed ({kind}):[/] {url} — {error}")
+
     def _fetch_one(provider, url: str, kind: str) -> None:
         try:
             results.append((url, provider.fetch(url)))
         except Exception as exc:
-            failed_urls.append({"url": url, "error": str(exc), "phase": kind})
-            if not json_output:
-                console.print(f"  [red]Failed ({kind}):[/] {url} — {exc}")
+            _fail(url, str(exc), kind)
 
     # Batch fetch normal URLs
     if normal_urls:
         if hasattr(prov, "fetch_many"):
             try:
+                batch = prov.fetch_many(normal_urls)
                 # fetch_many answers in completion order, so each result names
                 # the input it belongs to.
-                results.extend(
-                    (r.requested_url or r.url, r) for r in prov.fetch_many(normal_urls)
-                )
+                results.extend((r.requested_url or r.url, r) for r in batch)
+                # The URLs it gave up on (SSRF refusal, failed navigation, ...)
+                for f in getattr(batch, "failures", ()):
+                    _fail(f["url"], f["error"], "batch")
             except Exception as e:
                 # fetch_many can return zero results on a single bad URL
                 # inside the batch comprehension. Fall back to per-URL so we
@@ -167,6 +172,13 @@ def fetch_batch(
         )
         for url in visible_urls:
             _fetch_one(visible_prov, url, "visible")
+
+    # Every input ends up created, skipped or failed. A provider that returns
+    # neither a result nor a failure for a URL has still lost it.
+    answered = {u for u, _ in results} | {f["url"] for f in failed_urls}
+    for url in new_urls:
+        if url not in answered:
+            _fail(url, "the provider returned no result for this URL", "batch")
 
     # Partition into what can be written and what was blocked. Blocked sources
     # get one open-access rescue attempt before being written off — see

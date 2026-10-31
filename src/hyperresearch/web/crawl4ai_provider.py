@@ -23,7 +23,7 @@ from crawl4ai.browser_adapter import UndetectedAdapter
 from crawl4ai.content_filter_strategy import PruningContentFilter
 
 from hyperresearch.core.config import FetchSettings, JunkGates
-from hyperresearch.web.base import WebResult, is_binary_garbage
+from hyperresearch.web.base import BatchResults, WebResult, is_binary_garbage
 from hyperresearch.web.pdf import PDF_FAILURE_KEY
 from hyperresearch.web.pdf import failure_reason as _pdf_failure_reason
 from hyperresearch.web.pdf import fetch_pdf as _fetch_pdf
@@ -457,17 +457,18 @@ class Crawl4AIProvider:
                 screenshot=screenshot_bytes,
             )
 
-    def fetch_many(self, urls: list[str]) -> list[WebResult]:
+    def fetch_many(self, urls: list[str]) -> BatchResults:
         """Fetch multiple URLs concurrently using crawl4ai's arun_many."""
         return _run_coro(self._fetch_many_async(urls))
 
-    async def _fetch_many_async(self, urls: list[str]) -> list[WebResult]:
+    async def _fetch_many_async(self, urls: list[str]) -> BatchResults:
         # SSRF gate: same entry-point check as fetch(). Refused URLs are
-        # skipped (logged), not fatal — one hostile URL must not kill the
-        # whole batch.
+        # skipped (logged, and reported in the result's failures), not
+        # fatal: one hostile URL must not kill the whole batch.
         from hyperresearch.web.safe_http import CertVerificationError, SafeHTTPError, check_url
 
         log = logging.getLogger("hyperresearch.web")
+        web_results = BatchResults()
         allowed_urls = []
         for url in urls:
             try:
@@ -475,12 +476,11 @@ class Crawl4AIProvider:
                 allowed_urls.append(url)
             except SafeHTTPError as exc:
                 log.warning("refused batch fetch for %s: %s", url, exc)
+                web_results.fail(url, str(exc))
 
         # Split: PDFs go direct, rest go through browser
         pdf_urls = [u for u in allowed_urls if _is_pdf_url(u)]
         html_urls = [u for u in allowed_urls if not _is_pdf_url(u)]
-
-        web_results = []
 
         # Fetch PDFs directly (no browser needed). When _fetch_pdf returns
         # None (parser failure, non-PDF body served at a .pdf URL) we fall
@@ -489,8 +489,8 @@ class Crawl4AIProvider:
         # need JS-rendered landing pages. Cert refusals are the exception:
         # the browser lane may run with TLS errors ignored
         # (browser_verify_tls = false), so falling back would be an
-        # automatic unverified retry. A batch has no per-URL failure
-        # channel, so the skip is logged loudly instead.
+        # automatic unverified retry, so the URL is skipped: logged loudly
+        # and reported in the result's failures.
         failed_pdf_urls = []
         for url in pdf_urls:
             try:
@@ -502,6 +502,7 @@ class Crawl4AIProvider:
                     "pdf_verify_tls = false under [fetch] in config.toml. (%s)",
                     url, exc,
                 )
+                web_results.fail(url, str(exc))
                 continue
             if pdf_result is not None:
                 pdf_result.requested_url = url
@@ -523,7 +524,8 @@ class Crawl4AIProvider:
                     cr_url = getattr(cr, "url", None)
                     url = cr_url if cr_url in requested else zipped_url
                     if not cr.success:
-                        code = _cert_error_code(getattr(cr, "error_message", None))
+                        error_message = getattr(cr, "error_message", None)
+                        code = _cert_error_code(error_message)
                         if code:
                             log.warning(
                                 "SKIPPED (TLS certificate invalid): %s -- a potentially "
@@ -531,6 +533,9 @@ class Crawl4AIProvider:
                                 "browser_verify_tls = false under [fetch] in config.toml. (%s)",
                                 url, code,
                             )
+                            web_results.fail(url, str(_browser_cert_refusal(url, code)))
+                        else:
+                            web_results.fail(url, error_message or "browser navigation failed")
                         continue
                     try:
                         _check_final_url(
@@ -538,6 +543,7 @@ class Crawl4AIProvider:
                         )
                     except SafeHTTPError as exc:
                         log.warning("dropping batch result for %s: %s", url, exc)
+                        web_results.fail(url, str(exc))
                         continue
                     metadata = cr.metadata or {}
                     md = cr.markdown
@@ -558,6 +564,7 @@ class Crawl4AIProvider:
                             # Keep the batch alive, but don't store the binary
                             # garbage the browser got either.
                             log.warning("SKIPPED (TLS certificate invalid): %s (%s)", url, exc)
+                            web_results.fail(url, str(exc))
                             continue
                         if pdf_result is not None:
                             pdf_result.requested_url = url
