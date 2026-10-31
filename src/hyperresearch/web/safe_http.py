@@ -26,6 +26,7 @@ Returns a small :class:`SafeResponse` dataclass instead of an
 
 from __future__ import annotations
 
+import codecs
 import ipaddress
 import re
 import socket
@@ -81,10 +82,56 @@ class SafeResponse:
         ct = self.headers.get("content-type", "")
         if "charset=" in ct.lower():
             charset = ct.lower().split("charset=", 1)[1].split(";", 1)[0].strip() or "utf-8"
+        elif not ct or "html" in ct.lower():
+            charset = _sniff_html_charset(self.content) or charset
         try:
             return self.content.decode(charset, errors="replace")
         except LookupError:
             return self.content.decode("utf-8", errors="replace")
+
+
+# A BOM names the encoding outright. utf-8-sig strips the mark; the utf-16
+# codec reads the byte order from it and strips it too.
+_BOMS = (
+    (b"\xef\xbb\xbf", "utf-8-sig"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+)
+# <meta charset="..."> and <meta http-equiv="Content-Type"
+# content="text/html; charset=...">, both of which carry "charset=" inside
+# one meta tag.
+_META_CHARSET_RE = re.compile(rb"""<meta[^>]+?charset\s*=\s*["']?\s*([A-Za-z0-9_.:-]+)""", re.I)
+# Browsers decode these labels as windows-1252 (WHATWG Encoding). Real
+# latin-1 maps bytes 0x80-0x9F to C1 controls, which is where such pages
+# keep their smart quotes, and the junk gate counts C1 controls as binary.
+_WINDOWS_1252_ALIASES = frozenset({"iso8859_1", "ascii"})
+
+
+def _sniff_html_charset(body: bytes) -> str | None:
+    """The encoding an HTML body declares for itself, or None.
+
+    Used only when the Content-Type header names no charset, the case where
+    browsers fall back to the BOM and then to a <meta> declaration in the
+    first 1024 bytes. Without this, a windows-1252 or Shift_JIS page was
+    decoded as UTF-8 and saved as replacement characters or rejected as junk.
+    """
+    for bom, name in _BOMS:
+        if body.startswith(bom):
+            return name
+    m = _META_CHARSET_RE.search(body[:1024])
+    if not m:
+        return None
+    try:
+        name = codecs.lookup(m.group(1).decode("ascii")).name.replace("-", "_")
+    except LookupError:
+        return None
+    if name.startswith("utf_16"):
+        # The prescan only matches ASCII bytes, so the page is not really
+        # UTF-16; browsers read this declaration as UTF-8.
+        return "utf-8"
+    if name in _WINDOWS_1252_ALIASES:
+        return "cp1252"
+    return name
 
 
 # Carrier-grade NAT (RFC 6598). Not covered by any ipaddress is_* property
