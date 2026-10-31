@@ -534,8 +534,8 @@ def run_report(
         for step in report["steps"]:
             console.print(f"  step {step['step']:>4}: {step['status']:<8} {step['minutes']} min")
         spend = report["spend"]
-        console.print(f"  API-equiv spend: ~${spend['estimated_usd']} | {spend['sources_fetched']} sources | "
-                      f"{spend['agents_spawned']} agents | {spend['notes_written']} notes")
+        console.print(f"  API-equiv spend: ~${spend.get('estimated_usd', 0.0)} | {spend.get('sources_fetched', 0)} sources | "
+                      f"{spend.get('agents_spawned', 0)} agents | {spend.get('notes_written', 0)} notes")
         ev = report["events"]
         if ev:
             console.print(f"  events: {ev}")
