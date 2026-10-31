@@ -610,6 +610,9 @@ class HyperresearchServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = sys.platform != "win32"
+    # socketserver's default listen backlog is 5; past it macOS resets new
+    # connections, so a page load plus a few concurrent clients could fail.
+    request_queue_size = 128
 
     def server_bind(self):
         port = self.server_address[1]
