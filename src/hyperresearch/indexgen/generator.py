@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import yaml
 
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.note import slugify
 
 
@@ -196,12 +197,13 @@ class IndexGenerator:
         return self._write_index("_recent.md", "Recently Updated", "\n".join(lines))
 
     def _build_orphans(self) -> str:
-        rows = self.vault.db.execute("""
+        # The previous build's own pages link every note, so only note links count.
+        rows = self.vault.db.execute(f"""
             SELECT n.id, n.title, n.path, n.status
             FROM notes n
             WHERE n.type NOT IN ('index', 'raw')
-              AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-              AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+              AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+              AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
             ORDER BY n.title
         """).fetchall()
 
@@ -323,7 +325,7 @@ class IndexGenerator:
 
         rows = self.vault.db.execute(
             "SELECT l.target_id as id, n.title, COUNT(*) as inbound "
-            "FROM links l JOIN notes n ON l.target_id = n.id "
+            f"FROM ({NOTE_LINKS_SQL}) l JOIN notes n ON l.target_id = n.id "
             "WHERE l.target_id IS NOT NULL "
             "AND COALESCE(n.summary, '') NOT LIKE ? "
             "GROUP BY l.target_id ORDER BY inbound DESC LIMIT 30",

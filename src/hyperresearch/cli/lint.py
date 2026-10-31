@@ -1694,11 +1694,13 @@ def lint(
             })
 
     if "orphaned-notes" in rules_to_run:
-        for row in conn.execute("""
+        from hyperresearch.core.graphrank import NOTE_LINKS_SQL
+
+        for row in conn.execute(f"""
             SELECT n.id, n.path FROM notes n
             WHERE n.type NOT IN ('index', 'raw')
-              AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-              AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+              AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+              AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
         """):
             issues.append({
                 "rule": "orphaned-notes",
