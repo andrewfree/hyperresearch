@@ -497,6 +497,11 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         ).fetchall()
 
         html_body = render_markdown(row["body"])
+        # `note new --body` and MCP create_note store the body as given, with
+        # no "# Title" line, so show the title unless the body opens with one.
+        first_line = next((line for line in row["body"].splitlines() if line.strip()), "")
+        if not re.match(r"#\s+\S", first_line):
+            html_body = f"<h1>{html_mod.escape(row['title'])}</h1>\n{html_body}"
         tags_html = " ".join(f'<a href="/tag/{html_mod.escape(t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
         status_class = row["status"]
         meta = (
