@@ -86,6 +86,15 @@ def _image(m: re.Match[str], *, allow_remote_images: bool = False) -> str:
 _LINK_TEXT = r"[^\[\]\x00]"
 _LINK_URL = r'((?:[^()"\x00]|\([^()"\x00]*\))+)'
 
+_INLINE_PATTERNS = [
+    # Bold/italic
+    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"<strong><em>\1</em></strong>"),
+    (re.compile(r"\*\*(.+?)\*\*"), r"<strong>\1</strong>"),
+    (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
+    # Code
+    (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+]
+
 # Simple markdown patterns
 MD_PATTERNS = [
     # Headers
@@ -95,12 +104,7 @@ MD_PATTERNS = [
     (re.compile(r"^###\s+(.+)$", re.MULTILINE), r"<h3>\1</h3>"),
     (re.compile(r"^##\s+(.+)$", re.MULTILINE), r"<h2>\1</h2>"),
     (re.compile(r"^#\s+(.+)$", re.MULTILINE), r"<h1>\1</h1>"),
-    # Bold/italic
-    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"<strong><em>\1</em></strong>"),
-    (re.compile(r"\*\*(.+?)\*\*"), r"<strong>\1</strong>"),
-    (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
-    # Code
-    (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+    *_INLINE_PATTERNS,
     # Images, before links: the link pattern also matches the "[alt](url)"
     # inside "![alt](url)" and would leave "!<a ...>" behind.
     (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), _image),
@@ -137,7 +141,7 @@ def render_markdown(
     text = re.sub(r"```(\w*)\n(.*?)```", save_code_block, text, flags=re.DOTALL)
 
     # Wiki links: [[target|display]] or [[target]]
-    wiki_links = []
+    wiki_links = {}
     def replace_wiki_link(m):
         full = m.group(0)
         # Unescape the brackets that html.escape would have converted
@@ -150,15 +154,18 @@ def render_markdown(
         display = display.strip()
         # Look the ref up the way sync stored it: unescaped, trailing '\' dropped.
         ref = html.unescape(target).rstrip("\\")
-        wiki_links.append(
+        for pattern, replacement in _INLINE_PATTERNS:
+            display = pattern.sub(replacement, display)
+        placeholder = f"\x00WIKI{len(wiki_links)}\x00"
+        wiki_links[placeholder] = (
             f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
         )
-        return f"\x00WIKI{len(wiki_links) - 1}\x00"
+        return placeholder
 
     # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
     text = re.sub(r'\[\[([^\[\]\n"]+)\]\]', replace_wiki_link, text)
 
-    # Keep formatting out of refs and labels. Link/image patterns exclude the
+    # Keep surrounding formatting out of refs. Link/image patterns exclude the
     # placeholder delimiter so restoration cannot put markup in an attribute.
     for pattern, replacement in MD_PATTERNS:
         if replacement is _image:
@@ -190,8 +197,8 @@ def render_markdown(
         result_lines.append(_render_table(table_lines))
     text = "\n".join(result_lines)
 
-    for i, link in enumerate(wiki_links):
-        text = text.replace(f"\x00WIKI{i}\x00", link)
+    # One scan also keeps a page with many valid links linear in size.
+    text = re.sub(r"\x00WIKI[0-9]+\x00", lambda m: wiki_links.get(m.group(0), m.group(0)), text)
 
     # Restore code blocks. They were saved from the already-escaped body, so
     # escaping them again showed '&lt;' and '&amp;' as literal text.
