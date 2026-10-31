@@ -702,7 +702,11 @@ def _rename_note_id(
 def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> None:
     """Insert or update a note and all related tables using proper UPSERT."""
     meta = note.meta
+    created_declared = "created" in meta.model_fields_set
     created_iso = meta.created.isoformat() if meta.created else synced_at
+    if not created_declared:
+        # A parsed default is the read time, not the note's creation time.
+        created_iso = datetime.fromtimestamp(file_mtime, UTC).isoformat()
     updated_iso = meta.updated.isoformat() if meta.updated else None
 
     reviewed_iso = meta.reviewed.isoformat() if meta.reviewed else None
@@ -731,7 +735,8 @@ def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> Non
             deprecated=excluded.deprecated,
             reviewed=excluded.reviewed, expires=excluded.expires,
             word_count=excluded.word_count, summary=excluded.summary,
-            created=excluded.created, updated=excluded.updated,
+            created=CASE WHEN ? THEN excluded.created ELSE notes.created END,
+            updated=excluded.updated,
             file_mtime=excluded.file_mtime, content_hash=excluded.content_hash,
             synced_at=excluded.synced_at,
             doi=excluded.doi, utility_score=excluded.utility_score,
@@ -751,7 +756,7 @@ def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> Non
             meta.doi, meta.utility_score, meta.citation_count, meta.venue,
             None if meta.is_retracted is None else int(meta.is_retracted),
             meta.oa_url, meta.oa_source, meta.oa_version, meta.oa_license,
-            meta.oa_recovery_kind,
+            meta.oa_recovery_kind, created_declared,
         ),
     )
 
