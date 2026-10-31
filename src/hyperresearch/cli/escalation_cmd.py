@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import urlparse
 
 import typer
@@ -34,6 +35,26 @@ def _vault_or_exit(json_output: bool):
         else:
             console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
+
+
+def _refuse_unclaimed(item: dict, json_output: bool) -> NoReturn:
+    """Exit 1 for an ingest of an item that is not in_progress."""
+    status = item["status"]
+    if status in ("fetched", "abandoned"):
+        noted = f" as note '{item['note_id']}'" if item.get("note_id") else ""
+        message = f"escalation item #{item['id']} is already {status}{noted}; nothing to ingest"
+        code = "ALREADY_RESOLVED"
+    else:
+        message = (
+            f"escalation item #{item['id']} is {status}, not claimed; "
+            "ingest completes an item taken with `escalation claim`"
+        )
+        code = "NOT_CLAIMED"
+    if json_output:
+        output(error(message, code), json_mode=True)
+    else:
+        console.print(f"[red]Error:[/] {escape(message)}")
+    raise typer.Exit(1)
 
 
 @app.command("list")
@@ -126,7 +147,7 @@ def escalation_ingest(
     One command so the browser agent can't half-finish the bookkeeping.
     Notes carry `fetch_provider: chrome` — browser-lane provenance is visible.
     """
-    from hyperresearch.core.escalation import EscalationError, list_items, resolve
+    from hyperresearch.core.escalation import EscalationError, get_item, resolve
     from hyperresearch.core.fetcher import discard_unindexed_note
     from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.scholar import extract_doi
@@ -135,14 +156,17 @@ def escalation_ingest(
     vault = _vault_or_exit(json_output)
     conn = vault.db
 
-    matching = [it for it in list_items(conn, limit=10000) if it["id"] == item_id]
-    if not matching:
+    item = get_item(conn, item_id)
+    if item is None:
         if json_output:
             output(error(f"no escalation item #{item_id}", "NOT_FOUND"), json_mode=True)
         else:
             console.print(f"[red]Error:[/] no escalation item #{item_id}")
         raise typer.Exit(1)
-    item = matching[0]
+    # Only a claimed item: a retry after a finished ingest would otherwise
+    # write a second note and repoint the item at it.
+    if item["status"] != "in_progress":
+        _refuse_unclaimed(item, json_output)
 
     body = Path(body_file).read_text(encoding="utf-8-sig")
     url = item["url"]
@@ -189,6 +213,25 @@ def escalation_ingest(
             console.print(f"[red]Error:[/] {escape(refused)}")
         raise typer.Exit(1)
 
+    # Resolved only while still claimed, and before the source row: when two
+    # ingests of one item both passed the check above, the second to get
+    # here removes its note instead of repointing the item at it.
+    try:
+        resolved = resolve(conn, item_id, "fetched", note_id=note_id, expected_status="in_progress")
+    except EscalationError as e:
+        note_path.unlink(missing_ok=True)
+        plan = compute_sync_plan(vault)
+        if plan.to_delete:
+            execute_sync(vault, plan)
+        current = get_item(conn, item_id)
+        if current is not None:
+            _refuse_unclaimed(current, json_output)
+        if json_output:
+            output(error(str(e), "ESCALATION_ERROR"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(1)
+
     content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
     conn.execute(
         """INSERT OR IGNORE INTO sources (url, note_id, domain, fetched_at, provider, content_hash)
@@ -196,15 +239,6 @@ def escalation_ingest(
         (url, note_id, domain, now.isoformat(), "chrome", content_hash),
     )
     conn.commit()
-
-    try:
-        resolved = resolve(conn, item_id, "fetched", note_id=note_id)
-    except EscalationError as e:
-        if json_output:
-            output(error(str(e), "ESCALATION_ERROR"), json_mode=True)
-        else:
-            console.print(f"[red]Error:[/] {e}")
-        raise typer.Exit(1)
 
     data = {
         "note_id": note_id,

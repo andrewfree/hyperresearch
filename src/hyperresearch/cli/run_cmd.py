@@ -495,11 +495,13 @@ def run_report(
                 reports.append(run_report_data(vault, tag))
             except (RunError, VaultError):
                 continue
+        # .get: one run's hand-edited spend block must not fail the rollup
+        # for every other run.
         agg = {
             "runs": len(reports),
-            "total_estimated_usd": round(sum(r["spend"]["estimated_usd"] for r in reports), 2),
-            "total_sources": sum(r["spend"]["sources_fetched"] for r in reports),
-            "total_agents": sum(r["spend"]["agents_spawned"] for r in reports),
+            "total_estimated_usd": round(sum(r["spend"].get("estimated_usd", 0.0) for r in reports), 2),
+            "total_sources": sum(r["spend"].get("sources_fetched", 0) for r in reports),
+            "total_agents": sum(r["spend"].get("agents_spawned", 0) for r in reports),
             "by_run": reports,
         }
         if json_output:
@@ -508,8 +510,9 @@ def run_report(
             console.print(f"[bold]{agg['runs']} runs[/] — ~${agg['total_estimated_usd']} API-equiv, "
                           f"{agg['total_sources']} sources, {agg['total_agents']} agents")
             for r in reports:
-                console.print(f"  [cyan]{r['vault_tag']}[/] {r['status']} ~${r['spend']['estimated_usd']} "
-                              f"{r['spend']['sources_fetched']}src {r['total_wall_minutes']}min")
+                spend = r["spend"]
+                console.print(f"  [cyan]{r['vault_tag']}[/] {r['status']} ~${spend.get('estimated_usd', 0.0)} "
+                              f"{spend.get('sources_fetched', 0)}src {r['total_wall_minutes']}min")
         return
 
     tag = _resolve_tag(vault, vault_tag, json_output)
