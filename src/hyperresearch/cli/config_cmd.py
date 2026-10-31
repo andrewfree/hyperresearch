@@ -147,12 +147,17 @@ def config_agent_docs(
     """Update CLAUDE.md (and AGENTS.md on Codex installs) with the latest hyperresearch blurb."""
     from hyperresearch.core.agent_docs import inject_agent_docs
     from hyperresearch.core.hooks import installed_platforms
+    from hyperresearch.core.platforms import paths_for
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
-    modified = inject_agent_docs(vault.root)
-    if "codex" in installed_platforms(vault.root):
-        modified += inject_agent_docs(vault.root, platform="codex")
+    # Only the runtimes the project was installed for: a Codex-only project
+    # must not gain a CLAUDE.md. Neither installed means Claude Code, the
+    # default target.
+    platforms = installed_platforms(vault.root) or ["claude"]
+    modified: list[str] = []
+    for platform in platforms:
+        modified += inject_agent_docs(vault.root, platform=platform)
 
     if json_output:
         output(success({"modified": modified}, vault=str(vault.root)), json_mode=True)
@@ -161,4 +166,5 @@ def config_agent_docs(
             for m in modified:
                 console.print(f"  [green]{m}[/]")
         else:
-            console.print("[dim]CLAUDE.md already up to date.[/]")
+            docs = " and ".join(paths_for(p).docs_file for p in platforms)
+            console.print(f"[dim]{docs} already up to date.[/]")
