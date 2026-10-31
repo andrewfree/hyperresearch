@@ -174,7 +174,8 @@ def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, st
 
     'attention AND -' becomes 'attention'. Operators left side by side keep
     the later one, so 'AI AND / OR ML' becomes 'AI OR ML' and 'a AND NOT b',
-    which FTS5 rejects, becomes 'a NOT b'.
+    which FTS5 rejects, becomes 'a NOT b'. OR NOT cannot be expressed by
+    FTS5 and must be rejected rather than silently narrowed to NOT.
 
     A NOT that still has an operand after it is never dropped or replaced:
     'NOT foo AND bar' searched as 'foo AND bar' would return exactly the
@@ -187,6 +188,8 @@ def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, st
         if item[0] != "op":
             out.append(item)
         elif out and out[-1][0] == "op" and out[-1][1] != "NOT":
+            if out[-1][1] == "OR" and item[1] == "NOT":
+                raise SearchQueryError("Invalid search query: OR NOT is not supported by FTS5.")
             out[-1] = item
         elif out or item[1] == "NOT":
             out.append(item)
