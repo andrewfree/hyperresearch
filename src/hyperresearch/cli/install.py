@@ -331,7 +331,7 @@ def install(
         vault_action = "existing"
     else:
         try:
-            vault = Vault.init(root, name=name, platforms=tuple(targets))
+            vault = Vault.init(root, name=name, platforms=())
             vault_action = "created"
         except VaultError as e:
             if json_output:
