@@ -16,6 +16,50 @@ from hyperresearch.models.output import error, success
 app = typer.Typer()
 
 
+def _open_in_editor(path: Path) -> None:
+    """Open `path` in $EDITOR (else $VISUAL), split like a shell command line.
+
+    Run as one program name, an EDITOR with arguments (`code --wait`) died
+    with FileNotFoundError. A program that cannot start is a clean error on
+    stderr, so the JSON `note new --json --edit` printed stays the only
+    thing on stdout.
+    """
+    import shlex
+    import subprocess
+
+    from rich.markup import escape
+
+    from hyperresearch.cli._output import err_console
+
+    editor = (
+        os.environ.get("EDITOR")
+        or os.environ.get("VISUAL")
+        or ("notepad" if os.name == "nt" else "vim")
+    )
+    try:
+        # The path to a program, spaces and all, still names it unquoted.
+        if os.path.isfile(editor):
+            argv = [editor]
+        elif os.name == "nt":
+            # posix=False keeps the quotes around a quoted path; drop them.
+            argv = [
+                a[1:-1] if len(a) > 1 and a[0] == a[-1] == '"' else a
+                for a in shlex.split(editor, posix=False)
+            ]
+        else:
+            argv = shlex.split(editor)
+        if not argv:
+            raise ValueError("no program given")
+        subprocess.run([*argv, str(path)])
+    except (OSError, ValueError) as e:
+        err_console.print(
+            f"[red]Cannot start the editor[/] {escape(repr(editor))}: {escape(str(e))}\n"
+            "Set EDITOR to a program on your PATH, with its arguments "
+            "(for example EDITOR='code --wait')."
+        )
+        raise typer.Exit(1)
+
+
 @app.command("new")
 def note_new(
     title: str = typer.Argument(..., help="Note title"),
@@ -204,11 +248,7 @@ def note_new(
         console.print(f"[green]Created:[/] {rel}")
 
     if edit:
-        import os
-        import subprocess
-
-        editor = os.environ.get("EDITOR", "vim")
-        subprocess.run([editor, str(path)])
+        _open_in_editor(path)
 
 
 @app.command("show")
@@ -455,9 +495,6 @@ def note_edit(
     note_id: str = typer.Argument(..., help="Note ID to edit"),
 ) -> None:
     """Open a note in $EDITOR."""
-    import os
-    import subprocess
-
     vault = discover_vault()
     vault.auto_sync()
 
@@ -466,9 +503,7 @@ def note_edit(
         console.print(f"[red]Not found:[/] {note_id}")
         raise typer.Exit(1)
 
-    file_path = vault.root / row["path"]
-    editor = os.environ.get("EDITOR", os.environ.get("VISUAL", "notepad" if os.name == "nt" else "vim"))
-    subprocess.run([editor, str(file_path)])
+    _open_in_editor(vault.root / row["path"])
 
 
 @app.command("update")
