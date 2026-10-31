@@ -279,7 +279,10 @@ def set_levers(vault, vault_tag: str, updates: dict) -> dict:
     dpath = _decomposition_path(vault, vault_tag)
     if not dpath.exists():
         raise LeverError(f"no prompt-decomposition.json for run '{vault_tag}' ({dpath})")
-    decomp = json.loads(dpath.read_text(encoding="utf-8"))
+    try:
+        decomp = json.loads(dpath.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise LeverError(f"corrupt prompt-decomposition.json: {e}") from e
     levers = {**(decomp.get("levers") or {}), **updates}
     resolved = validate_levers(levers)  # raises before any write
     decomp["levers"] = levers

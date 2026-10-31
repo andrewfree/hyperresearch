@@ -58,9 +58,9 @@ def run_init(
 
     vault = _vault_or_exit(json_output)
     query = None
-    if query_file:
-        query = Path(query_file).read_text(encoding="utf-8-sig")
     try:
+        if query_file:
+            query = Path(query_file).read_text(encoding="utf-8-sig")
         manifest = init_run(
             vault,
             vault_tag,
@@ -70,7 +70,7 @@ def run_init(
             max_sources=max_sources,
             max_notes=max_notes,
         )
-    except (RunError, VaultError) as e:
+    except (RunError, VaultError, OSError, UnicodeDecodeError) as e:
         if json_output:
             output(error(str(e), "RUN_ERROR"), json_mode=True)
         else:
