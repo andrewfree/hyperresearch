@@ -7,6 +7,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich.tree import Tree
 
@@ -118,10 +119,10 @@ def print_note_summary(notes: list[dict], title: str = "Notes") -> None:
     for n in notes:
         tags = ", ".join(n.get("tags", []))
         table.add_row(
-            n.get("id", ""),
-            n.get("title", ""),
-            n.get("status", ""),
-            tags,
+            escape(n.get("id", "")),
+            escape(n.get("title", "")),
+            escape(n.get("status", "")),
+            escape(tags),
             str(n.get("word_count", "")),
         )
     console.print(table)

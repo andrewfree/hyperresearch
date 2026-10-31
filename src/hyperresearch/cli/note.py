@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, discover_vault, output, print_note_summary
 from hyperresearch.models.output import error, success
@@ -334,7 +335,8 @@ def note_show(
                 else:
                     console.print(f"[red]Note not found:[/] {note_id}")
                 raise typer.Exit(1)
-            console.print((vault.root / row["path"]).read_text(encoding="utf-8"))
+            import sys
+            sys.stdout.write((vault.root / row["path"]).read_text(encoding="utf-8"))
             return
 
         data = _fetch_note(note_id)
@@ -351,11 +353,11 @@ def note_show(
             if meta:
                 for k, v in data.items():
                     if v is not None:
-                        console.print(f"  [dim]{k}:[/] {v}")
+                        console.print(f"  [dim]{k}:[/] {escape(str(v))}")
             else:
                 tags = data.get("tags", [])
-                console.print(f"[bold]{data['title']}[/]  [dim]({data['id']})[/]")
-                console.print(f"[dim]Status: {data['status']} | Tags: {', '.join(tags)}[/]")
+                console.print(f"[bold]{escape(data['title'])}[/]  [dim]({escape(data['id'])})[/]")
+                console.print(f"[dim]Status: {escape(data['status'])} | Tags: {escape(', '.join(tags))}[/]")
                 console.print()
                 from rich.markdown import Markdown
                 console.print(Markdown(data.get("body", "")))
@@ -377,8 +379,8 @@ def note_show(
     else:
         for data in notes:
             tags = data.get("tags", [])
-            console.print(f"\n[bold]{data['title']}[/]  [dim]({data['id']})[/]")
-            console.print(f"[dim]Status: {data['status']} | Tags: {', '.join(tags)}[/]")
+            console.print(f"\n[bold]{escape(data['title'])}[/]  [dim]({escape(data['id'])})[/]")
+            console.print(f"[dim]Status: {escape(data['status'])} | Tags: {escape(', '.join(tags))}[/]")
             if not meta:
                 console.print()
                 from rich.markdown import Markdown
