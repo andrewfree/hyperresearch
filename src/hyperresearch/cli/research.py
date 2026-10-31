@@ -51,7 +51,10 @@ def research(
 
     # Step 1: Search
     if not json_output:
-        console.print(f"[bold]Researching:[/] {topic}")
+        # The topic, titles and note ids print literally, never as Rich
+        # markup: a "[/y]" in a page title raised MarkupError mid-run, as it
+        # did in fetch and fetch-batch.
+        console.print(f"[bold]Researching:[/] {escape(topic)}")
         console.print(f"[dim]Provider: {prov.name}, max results: {max_results}, depth: {depth}[/]")
 
     try:
@@ -97,7 +100,7 @@ def research(
             fetched_urls.add(result.url)
             pages_fetched += 1
             if not json_output:
-                console.print(f"  [green]+[/] {note_data['title']}")
+                console.print(f"  [green]+[/] {escape(note_data['title'])}")
 
     # Step 3: Follow links (depth > 0)
     if depth > 0 and pages_fetched < max_pages:
@@ -124,7 +127,9 @@ def research(
                         fetched_urls.add(link_url)
                         pages_fetched += 1
                         if not json_output:
-                            console.print(f"  [dim]+[/] {note_data['title']} [dim](depth {d + 1})[/]")
+                            console.print(
+                                f"  [dim]+[/] {escape(note_data['title'])} [dim](depth {d + 1})[/]"
+                            )
                         # Collect links from this page for next depth
                         next_links.extend(_extract_links_from_results([result]))
                 except Exception:
@@ -179,7 +184,7 @@ def research(
         })
 
         if not json_output:
-            console.print(f"\n[bold green]Synthesis:[/] [[{moc_id}]]")
+            console.print(f"\n[bold green]Synthesis:[/] {escape(f'[[{moc_id}]]')}")
 
     # Step 6: Holistic auto-linking across all new notes
     if created_notes:
@@ -209,7 +214,7 @@ def research(
         if hubs and not json_output:
             console.print("\n[bold]Hub notes[/] (most connected):")
             for h in hubs:
-                console.print(f"  [{h['inbound_links']} links] [[{h['id']}]] {h['title']}")
+                console.print(escape(f"  [{h['inbound_links']} links] [[{h['id']}]] {h['title']}"))
 
     # Output
     data = {
