@@ -53,13 +53,17 @@ class _UnreadableNewFileError(Exception):
 
 def file_line_number(path: Path, body_line: int) -> int:
     """Translate a cached body line to a line in the source file."""
-    from hyperresearch.core.frontmatter import parse_frontmatter
+    from hyperresearch.core.frontmatter import (
+        FrontmatterBrokenError,
+        parse_frontmatter_for_update,
+    )
 
     try:
         content = path.read_text(encoding="utf-8-sig")
-    except OSError:
+        _, body = parse_frontmatter_for_update(content)
+    except (OSError, UnicodeError, FrontmatterBrokenError):
+        # Sync keeps the last readable cache when a file is half-written.
         return body_line
-    _, body = parse_frontmatter(content)
     return body_line + content[:len(content) - len(body)].count("\n")
 
 
