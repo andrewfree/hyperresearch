@@ -17,6 +17,16 @@ DAMPING = 0.85
 MAX_ITERATIONS = 50
 CONVERGENCE = 1e-6
 
+# The links that count for graph metrics, as a subquery: `FROM (...) l`.
+# Auto-generated index pages (type=index) wiki-link every note they list, so
+# counting them as sources made every listed note look linked: no orphans,
+# inflated hubs and backlinks, index pages soaking up rank. Their rows stay in
+# `links` so the viewer can still follow an index page's links.
+NOTE_LINKS_SQL = (
+    "SELECT * FROM links "
+    "WHERE source_id NOT IN (SELECT id FROM notes WHERE type = 'index')"
+)
+
 
 def pagerank(
     nodes: list[str],
@@ -67,6 +77,9 @@ def compute_centrality(conn) -> int:
     because something linked to it; letting it soak up rank rewards parse
     artifacts over real sources (#93). Their stored score is reset to 0 so
     vaults ranked before this exclusion do not keep stale weight.
+
+    Index pages are not part of the graph at all (see NOTE_LINKS_SQL), so
+    they are left out the same way and their score is cleared to NULL.
     """
     from hyperresearch.core.note import STUB_SUMMARY_PREFIX
 
@@ -74,7 +87,7 @@ def compute_centrality(conn) -> int:
     nodes = [
         row["id"]
         for row in conn.execute(
-            "SELECT id FROM notes WHERE COALESCE(summary, '') NOT LIKE ?",
+            "SELECT id FROM notes WHERE COALESCE(summary, '') NOT LIKE ? AND type != 'index'",
             (stub_pattern,),
         ).fetchall()
     ]
@@ -82,6 +95,7 @@ def compute_centrality(conn) -> int:
         "UPDATE notes SET centrality_score = 0 WHERE COALESCE(summary, '') LIKE ?",
         (stub_pattern,),
     )
+    conn.execute("UPDATE notes SET centrality_score = NULL WHERE type = 'index'")
     if not nodes:
         conn.commit()
         return 0
