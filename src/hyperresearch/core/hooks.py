@@ -4235,37 +4235,48 @@ _RETIRED_SKILL_DIRS: tuple[str, ...] = (
     "research",            # /research alias retired in v0.8.1 — only /hyperresearch now
 )
 
-# Every SKILL.md this project has ever installed names the project in its
-# frontmatter or its body. The retired dirs predate any install marker, so a
-# marker file cannot be used to recognize them — the content we shipped is the
-# only evidence available after the fact.
-_OWNED_SKILL_MARKERS: tuple[str, ...] = ("hyperresearch", "layercake")
+# The start of the provenance header (render.render_header) that every skill
+# and agent file an install renders carries. It is the only proof a file is
+# ours: a mention of the project is not, since a user's own skill in a project
+# that runs hyperresearch naturally names it.
+_PROVENANCE_MARKER = "<!-- rendered from profile"
+
+
+def _is_ours(path: Path) -> bool:
+    """True when `path` is a file this project rendered (it carries our header)."""
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return _PROVENANCE_MARKER in text
 
 
 def _is_our_skill_dir(path: Path) -> bool:
-    """True when `path` holds a SKILL.md this project wrote.
+    """True when `path` holds a SKILL.md this project rendered.
 
     A name match alone is not license to delete a directory. `research` is an
     ordinary English word and an obvious name for a hand-written personal
     skill, and `--global` puts the prune in ~/.claude/skills/, which is shared
     across every project the user has. Deleting on name alone destroyed user
-    content that was never ours (#73).
+    content that was never ours (#73). Files from before the header existed
+    cannot be told apart from the user's, so they are left alone too.
     """
-    skill_file = path / "SKILL.md"
-    if not skill_file.is_file():
-        return False
-    try:
-        text = skill_file.read_text(encoding="utf-8", errors="replace").lower()
-    except OSError:
-        return False
-    return any(marker in text for marker in _OWNED_SKILL_MARKERS)
+    return _is_ours(path / "SKILL.md")
 
 
 def _remove_skill_dir(path: Path) -> None:
-    """Delete a skill directory and everything under it."""
-    import shutil
+    """Delete the SKILL.md we wrote, then the directory if nothing else is in it.
 
-    shutil.rmtree(path)
+    SKILL.md is the only file an install writes into a skill directory, so
+    anything beside it was put there by someone else and stays.
+    """
+    (path / "SKILL.md").unlink()
+    try:
+        path.rmdir()
+    except OSError:
+        pass
 
 # V1 modality files — left over inside .claude/skills/hyperresearch/ on
 # vaults that were installed before the V8 alias-based entry skill.
@@ -4284,9 +4295,9 @@ def _prune_retired_agents(vault_root: Path) -> str | None:
     retired agent .md files and the old /research-ensemble + /research-layercake
     skill dirs so the installed state matches the current architecture.
 
-    A retired skill dir is only removed when its SKILL.md is recognizably one
-    we shipped. Anything else with the same name belongs to the user and is
-    reported instead of deleted.
+    A retired agent file or skill dir is only removed when it carries our
+    provenance header. Anything else with the same name may belong to the
+    user and is reported instead of deleted.
     """
     pruned: list[str] = []
     kept: list[str] = []
@@ -4295,9 +4306,13 @@ def _prune_retired_agents(vault_root: Path) -> str | None:
     if agents_dir.exists():
         for name in _RETIRED_AGENT_FILES:
             p = agents_dir / name
-            if p.exists():
-                p.unlink()
-                pruned.append(f"agent {name}")
+            if not p.exists():
+                continue
+            if not _is_ours(p):
+                kept.append(f".claude/agents/{name}")
+                continue
+            p.unlink()
+            pruned.append(f"agent {name}")
 
     skills_dir = vault_root / ".claude" / "skills"
     if skills_dir.exists():
@@ -4306,7 +4321,7 @@ def _prune_retired_agents(vault_root: Path) -> str | None:
             if not p.is_dir():
                 continue
             if not _is_our_skill_dir(p):
-                kept.append(name)
+                kept.append(f".claude/skills/{name}")
                 continue
             _remove_skill_dir(p)
             pruned.append(f"skill dir {name}")
@@ -4325,10 +4340,7 @@ def _prune_retired_agents(vault_root: Path) -> str | None:
     if pruned:
         parts.append("Pruned retired: " + ", ".join(pruned))
     if kept:
-        parts.append(
-            "Left alone (not ours): "
-            + ", ".join(f".claude/skills/{n}" for n in kept)
-        )
+        parts.append("Left alone (not ours): " + ", ".join(kept))
     if not parts:
         return None
     return " | ".join(parts)

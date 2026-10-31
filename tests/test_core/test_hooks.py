@@ -349,20 +349,22 @@ def test_patcher_install_idempotent(tmp_vault):
 def test_prune_retired_agents_removes_old_files(tmp_vault):
     """Pre-hyperresearch vaults have analyst/auditor/rewriter/subrun/merger agent
     files and a research-ensemble skill dir. Installing onto such a vault
-    must prune those so the installed state matches the current architecture."""
+    must prune those so the installed state matches the current architecture.
+    Only files carrying our provenance header count as ours: a mention of the
+    project is what a user's own skill has too."""
+    header = '<!-- rendered from profile "full" (hyperresearch 0.13.0) -->'
     agents_dir = tmp_vault.root / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     for name in _RETIRED_AGENT_FILES:
-        (agents_dir / name).write_text("pre-hyperresearch content\n", encoding="utf-8")
+        (agents_dir / name).write_text(f"{header}\npre-hyperresearch content\n", encoding="utf-8")
 
     skills_dir = tmp_vault.root / ".claude" / "skills"
     for name in _RETIRED_SKILL_DIRS:
         retired_skill = skills_dir / name
         retired_skill.mkdir(parents=True, exist_ok=True)
         # What we actually shipped into these dirs: the entry skill, renamed.
-        # Every version of it named the project in its body.
         (retired_skill / "SKILL.md").write_text(
-            f"---\nname: {name}\n---\n\n# Deep research\n\nRun the hyperresearch pipeline.\n",
+            f"---\nname: {name}\n---\n{header}\n\n# Deep research\n\nRun the hyperresearch pipeline.\n",
             encoding="utf-8",
         )
 
