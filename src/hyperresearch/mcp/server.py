@@ -99,8 +99,8 @@ def read_note(note_id: str) -> str:
     ).fetchone()
     if not row:
         return json.dumps({"error": f"Note not found: {note_id}"})
-    tag_row = vault.db.execute("SELECT GROUP_CONCAT(tag, ',') as tl FROM tags WHERE note_id = ?", (note_id,)).fetchone()
-    tags = tag_row["tl"].split(",") if tag_row and tag_row["tl"] else []
+    tag_row = vault.db.execute("SELECT json_group_array(tag) as tl FROM tags WHERE note_id = ?", (note_id,)).fetchone()
+    tags = json.loads(tag_row["tl"]) if tag_row and tag_row["tl"] else []
     return json.dumps({
         "id": row["id"], "title": row["title"], "path": row["path"],
         "status": row["status"], "type": row["type"], "tags": tags,
@@ -126,8 +126,8 @@ def read_many(note_ids: str) -> str:
             "SELECT n.*, nc.body FROM notes n JOIN note_content nc ON n.id = nc.note_id WHERE n.id = ?", (nid,)
         ).fetchone()
         if row:
-            tag_row = vault.db.execute("SELECT GROUP_CONCAT(tag, ',') as tl FROM tags WHERE note_id = ?", (nid,)).fetchone()
-            tags = tag_row["tl"].split(",") if tag_row and tag_row["tl"] else []
+            tag_row = vault.db.execute("SELECT json_group_array(tag) as tl FROM tags WHERE note_id = ?", (nid,)).fetchone()
+            tags = json.loads(tag_row["tl"]) if tag_row and tag_row["tl"] else []
             notes.append({"id": row["id"], "title": row["title"], "status": row["status"],
                           "tags": tags, "word_count": row["word_count"], "summary": row["summary"], "body": row["body"]})
         else:
@@ -165,11 +165,11 @@ def list_notes(status: str = "", tag: str = "", parent: str = "", sort: str = "u
     order = sort_map.get(sort, "COALESCE(n.updated, n.created) DESC")
     effective_limit = 999999 if limit == 0 else limit
     rows = vault.db.execute(
-        f"SELECT n.*, (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list "
+        f"SELECT n.*, (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list "
         f"FROM notes n WHERE {where} ORDER BY {order} LIMIT ?", [*params, effective_limit]
     ).fetchall()
     notes = [{"id": r["id"], "title": r["title"], "status": r["status"],
-              "tags": r["tag_list"].split(",") if r["tag_list"] else [],
+              "tags": json.loads(r["tag_list"]) if r["tag_list"] else [],
               "word_count": r["word_count"], "summary": r["summary"]} for r in rows]
     return json.dumps(notes, default=str)
 

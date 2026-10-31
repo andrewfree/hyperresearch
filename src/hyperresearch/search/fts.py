@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 
@@ -460,7 +461,7 @@ def search_fts(
             {snippet} as snippet,
             {fts_rowid} as fts_rowid,
             {score} as score,
-            (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+            (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM {source}
         WHERE {match}
         {filter_clause}
@@ -482,7 +483,7 @@ def search_fts(
 
     results = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         snippet = row["snippet"]
         if snippet is None and not filter_only:
             snippet = _excerpt_snippet(conn, fts_query, row["fts_rowid"])

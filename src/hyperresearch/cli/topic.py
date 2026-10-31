@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import typer
 
 from hyperresearch.cli._output import console, discover_vault, output
@@ -126,7 +128,7 @@ def topic_show(
     clause, params = parent_subtree_clause(topic)
     rows = vault.db.execute(
         f"""SELECT n.id, n.title, n.parent, n.status, n.word_count, n.summary,
-           (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+           (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM notes n
         WHERE {clause}
           AND n.type NOT IN ('index')
@@ -136,7 +138,7 @@ def topic_show(
 
     notes = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         notes.append({
             "id": row["id"],
             "title": row["title"],
