@@ -19,6 +19,17 @@ console = Console()
 def setup(
     path: str = typer.Argument(".", help="Path to set up"),
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output (non-interactive)"),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        "-n",
+        help="Name for a new vault (default: 'Research Base'). An existing vault keeps its name.",
+    ),
+    gear: str | None = typer.Option(
+        None,
+        "--profile",
+        help="Pipeline profile to render skill/agent prompts from. Defaults to the gear persisted by `hyperresearch profile use` (or 'full').",
+    ),
 ) -> None:
     """Interactive setup — configure hyperresearch step by step."""
     if json_output or not sys.stdin.isatty():
@@ -27,11 +38,31 @@ def setup(
         # `setup <path>` makes the directory when it runs interactively, so
         # it asks install to as well rather than meet its missing-path refusal.
         cmd = [sys.executable, "-m", "hyperresearch", "install", path, "--create"]
+        if name is not None:
+            cmd += ["--name", name]
+        if gear is not None:
+            cmd += ["--profile", gear]
         if json_output:
             cmd.append("--json")
         raise typer.Exit(subprocess.call(cmd))
 
     root = Path(path).resolve()
+
+    # Check the gear before any prompt or write, so a typo fails up front
+    # instead of after the whole walk-through.
+    if gear is not None:
+        from hyperresearch.core.profiles import ProfileError, resolve_profile
+        from hyperresearch.core.vault import Vault, VaultError
+
+        try:
+            gear_config = Vault.discover(root).config_path
+        except VaultError:
+            gear_config = None
+        try:
+            resolve_profile(gear, gear_config)
+        except ProfileError as e:
+            console.print(f"[red]Error:[/] {escape(str(e))}")
+            raise typer.Exit(1)
 
     console.print()
     console.print(
@@ -45,7 +76,7 @@ def setup(
         )
     )
 
-    vault_name = "Research Base"
+    vault_name = name if name is not None else "Research Base"
 
     # ── Step 1: Web Provider ──────────────────────────────────────
     console.print()
@@ -135,11 +166,13 @@ def setup(
         console.print(f"  [green]Vault created:[/] {vault.root}")
 
     # Write config — magic always on when crawl4ai is used
+    # The name is left alone: a new vault got it from Vault.init, and setup
+    # never asks for one, so setting it here reset an existing vault's name
+    # on every re-run.
     magic = use_crawl4ai
     vault.config.web_provider = provider
     vault.config.web_profile = profile
     vault.config.web_magic = magic
-    vault.config.name = vault_name
     vault.config.save(vault.config_path)
 
     # Inject CLAUDE.md
@@ -148,9 +181,10 @@ def setup(
     for action in doc_actions:
         console.print(f"  [green]Docs:[/] {action}")
 
-    # Install Claude Code hook + skills + subagents (rendered from the
-    # persisted scale gear, if one was chosen via `hpr profile use`)
-    hook_actions = install_hooks(root, hpr_path=hpr_path, profile=vault.config.pipeline_profile)
+    # Install Claude Code hook + skills + subagents (rendered from --profile,
+    # else the persisted scale gear, if one was chosen via `hpr profile use`)
+    install_gear = gear if gear is not None else vault.config.pipeline_profile
+    hook_actions = install_hooks(root, hpr_path=hpr_path, profile=install_gear)
     for action in hook_actions:
         if isinstance(action, HookRefusal):
             console.print(f"  [yellow]Not installed:[/] {escape(action)}")
