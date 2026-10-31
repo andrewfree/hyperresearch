@@ -149,13 +149,13 @@ def render_markdown(body: str) -> str:
         result_lines.append(_render_table(table_lines))
     text = "\n".join(result_lines)
 
-    # Restore code blocks
+    # Restore code blocks. They were saved from the already-escaped body, so
+    # escaping them again showed '&lt;' and '&amp;' as literal text.
     for i, block in enumerate(code_blocks):
-        html.escape(block)
         lang_match = re.match(r"```(\w+)\n", block)
         lang = lang_match.group(1) if lang_match else ""
         code_content = re.sub(r"```\w*\n|```", "", block)
-        code_html = f'<pre><code class="language-{lang}">{html.escape(code_content)}</code></pre>'
+        code_html = f'<pre><code class="language-{lang}">{code_content}</code></pre>'
         text = text.replace(f"\x00CODE{i}\x00", code_html)
 
     # Paragraphs: wrap standalone lines
