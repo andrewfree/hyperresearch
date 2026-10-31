@@ -336,7 +336,8 @@ def note_show(
                     console.print(f"[red]Note not found:[/] {note_id}")
                 raise typer.Exit(1)
             import sys
-            sys.stdout.write((vault.root / row["path"]).read_text(encoding="utf-8"))
+            # Bypass text streams so line endings and UTF-8 bytes stay intact.
+            sys.stdout.buffer.write((vault.root / row["path"]).read_bytes())
             return
 
         data = _fetch_note(note_id)
