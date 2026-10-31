@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
+from hyperresearch.core.fetcher import existing_live_note_for_url
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -52,11 +54,14 @@ def source_list(
             console.print("[dim]No sources fetched yet. Use 'hyperresearch fetch <url>' to start.[/]")
             return
         for s in sources:
-            status_color = "green" if s["status"] == "active" else "red"
+            # A row whose note was deleted keeps status 'active' in the DB,
+            # but fetch treats its URL as new.
+            status = "orphaned" if s["note_id"] is None else s["status"]
+            status_color = "green" if status == "active" else "red"
             console.print(
-                f"[{status_color}]{s['status']}[/] {s['url']}"
-                f" → [cyan]{s['note_id'] or '(deleted)'}[/]"
-                f" [dim]({s['provider']}, {s['fetched_at']})[/]"
+                f"[{status_color}]{status}[/] {escape(s['url'])}"
+                f" → [cyan]{escape(s['note_id'] or '(deleted)')}[/]"
+                f" [dim]({escape(str(s['provider']))}, {s['fetched_at']})[/]"
             )
         console.print(f"\n[dim]{len(sources)} sources[/]")
 
@@ -83,18 +88,23 @@ def source_check(
         (url,),
     ).fetchone()
 
-    if row:
+    # The same test as fetch's duplicate check: a row whose note was deleted
+    # (note_id NULL) is not a fetched source, and agents gate fetches on this.
+    if existing_live_note_for_url(vault.db, url):
         data = {"exists": True, **dict(row)}
         if json_output:
             output(success(data, vault=str(vault.root)), json_mode=True)
         else:
-            console.print(f"[green]Found:[/] {url} → note '{row['note_id']}'")
+            console.print(f"[green]Found:[/] {escape(url)} → note '{escape(row['note_id'])}'")
     else:
         data = {"exists": False, "url": url}
+        if row:
+            data["orphaned"] = True
         if json_output:
             output(success(data, vault=str(vault.root)), json_mode=True)
         else:
-            console.print(f"[dim]Not fetched:[/] {url}")
+            orphan_note = " (its note was deleted; fetch records it again)" if row else ""
+            console.print(f"[dim]Not fetched:[/] {escape(url)}{orphan_note}")
 
 
 @app.command("score")
