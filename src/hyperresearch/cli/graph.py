@@ -6,6 +6,7 @@ import typer
 from rich.markup import escape
 
 from hyperresearch.cli._output import console, discover_vault, output
+from hyperresearch.core.sync import file_line_number
 from hyperresearch.models.output import success
 
 app = typer.Typer()
@@ -38,7 +39,7 @@ def graph_backlinks(
             "source_id": r["source_id"],
             "source_title": r["source_title"],
             "source_path": r["source_path"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
             "context": r["context"],
         }
         for r in rows
@@ -73,8 +74,9 @@ def graph_outlinks(
     rows = vault.db.execute(
         """
         SELECT l.target_ref, l.target_id, n.title as target_title,
-               l.line_number, l.context
+               l.line_number, l.context, src.path as source_path
         FROM links l
+        JOIN notes src ON src.id = l.source_id
         LEFT JOIN notes n ON l.target_id = n.id
         WHERE l.source_id = ?
         ORDER BY l.line_number
@@ -87,7 +89,7 @@ def graph_outlinks(
             "target_ref": r["target_ref"],
             "target_id": r["target_id"],
             "target_title": r["target_title"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
             "resolved": r["target_id"] is not None,
         }
         for r in rows
@@ -151,7 +153,7 @@ def graph_broken(
     vault.auto_sync()
 
     rows = vault.db.execute("""
-        SELECT l.source_id, n.title as source_title, l.target_ref, l.line_number
+        SELECT l.source_id, n.title as source_title, l.target_ref, l.line_number, n.path as source_path
         FROM links l
         JOIN notes n ON l.source_id = n.id
         WHERE l.target_id IS NULL
@@ -163,7 +165,7 @@ def graph_broken(
             "source_id": r["source_id"],
             "source_title": r["source_title"],
             "target_ref": r["target_ref"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
         }
         for r in rows
     ]
