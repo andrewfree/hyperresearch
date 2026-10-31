@@ -33,3 +33,14 @@ def test_custom_research_dir_prompts(tmp_vault):
     assert reports
     assert all("research/notes/final_report_" not in text for text in reports)
     assert any("kb/notes/final_report_" in text for text in reports)
+
+
+def test_custom_research_dir_preserves_runtime_paths(tmp_vault):
+    tmp_vault.config.research_dir = "kb"
+    tmp_vault.config.save(tmp_vault.config_path)
+    install_hooks(tmp_vault.root, platform="codex")
+    entry = tmp_vault.root / ".agents" / "skills" / "hyperresearch" / "SKILL.md"
+    text = entry.read_text()
+    assert ".hyperresearch/codex/steps/" in text
+    assert ".hyperkb/" not in text
+    assert "hyperkb/" not in text
