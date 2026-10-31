@@ -62,3 +62,42 @@ def test_backlinks_list_each_linking_note_once(tmp_vault, viewer):
     assert backlinks.count("<li>") == 2
     assert backlinks.count(">Linker</a>") == 1
     assert backlinks.count(">Other</a>") == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Hello world.\n", "## Section\n\nText.\n", "```\n# a comment, not a heading\n```\n", "#hashtag first\n"],
+    ids=["plain", "h2-first", "code-first", "hashtag-first"],
+)
+def test_note_without_a_title_heading_shows_its_title(tmp_vault, viewer, body):
+    """`note new --body`, `--body-file` and MCP create_note store the body as
+    given, so most notes have no '# Title' line of their own."""
+    write_note(tmp_vault.notes_dir, "Plain Note", body=body)
+    _sync(tmp_vault)
+
+    status, page = _get(viewer, "/note/plain-note")
+
+    assert status == 200
+    assert _main(page).count("<h1>Plain Note</h1>") == 1
+
+
+def test_note_with_its_own_heading_gets_no_second_title(tmp_vault, viewer):
+    write_note(tmp_vault.notes_dir, "Headed", body="\n# Headed Differently\n\nText.\n")
+    _sync(tmp_vault)
+
+    status, page = _get(viewer, "/note/headed")
+
+    assert status == 200
+    main = _main(page)
+    assert main.count("<h1>") == 1
+    assert "<h1>Headed Differently</h1>" in main
+
+
+def test_shown_title_is_escaped(tmp_vault, viewer):
+    write_note(tmp_vault.notes_dir, "Fish & <Chips>", note_id="fish", body="Text.\n")
+    _sync(tmp_vault)
+
+    status, page = _get(viewer, "/note/fish")
+
+    assert status == 200
+    assert "<h1>Fish &amp; &lt;Chips&gt;</h1>" in _main(page)
