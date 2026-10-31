@@ -73,3 +73,16 @@ def test_a_wiki_link_cannot_wrap_a_rendered_link(body):
     '[[...]]' around it. Its quotes must not become part of a wiki href, where
     they would end the attribute and let note text add an event handler."""
     assert _event_handlers(render_markdown(body)) == []
+
+
+def test_fenced_code_is_escaped_exactly_once():
+    out = render_markdown('```\nif a < b && c > d: print("x")\n```\n')
+
+    assert '<pre><code class="language-">if a &lt; b &amp;&amp; c &gt; d: print(&quot;x&quot;)\n</code></pre>' in out
+
+
+def test_fenced_code_keeps_its_language_and_stays_inert():
+    out = render_markdown("```python\n<script>alert(1)</script>\n```\n")
+
+    assert '<code class="language-python">&lt;script&gt;alert(1)&lt;/script&gt;\n</code>' in out
+    assert "<script>" not in out
