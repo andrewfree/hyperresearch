@@ -167,6 +167,10 @@ def install(
 
         hpr_path = _resolve_executable()
         results: list[tuple[str, str | None]] = []
+        # The Codex sandbox keeps .codex/ read-only, so the bootstrap often
+        # gets the Stop hook refused. Joined into the step report, it read as
+        # installed, even on a re-run that wrote nothing.
+        refused: list[str] = []
         for platform in targets:
             _set_render_state(steps_profile, steps_config_path, platform)
             result = _install_hyperresearch_step_skills(target_dir, hpr_path)
@@ -174,12 +178,16 @@ def install(
                 # The Stop gate is what keeps a Codex session on the pipeline;
                 # a project bootstrapped from a global install needs it too.
                 hook = _install_codex_stop_hook(target_dir, hpr_path)
-                result = " | ".join(r for r in (result, hook) if r) or None
+                if isinstance(hook, HookRefusal):
+                    refused.append(hook)
+                else:
+                    result = " | ".join(r for r in (result, hook) if r) or None
             results.append((platform, result))
         if json_output:
             done = [r for _, r in results if r]
             data = {
                 "steps_installed": " | ".join(done) if done else None,
+                "refused": refused,
                 "target": str(target_dir),
                 "targets": targets,
             }
@@ -192,6 +200,10 @@ def install(
                 console.print(f"  {result}")
             else:
                 console.print(f"[dim]Step skills already installed at {where}[/]")
+        if refused:
+            console.print("[yellow]Not installed:[/]")
+            for note in refused:
+                console.print(f"  [yellow]{escape(note)}[/]")
         return
 
     # Global install path: only the user-level Claude Code entry skill +
