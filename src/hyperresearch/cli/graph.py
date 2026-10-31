@@ -5,8 +5,8 @@ from __future__ import annotations
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import error, success
+from hyperresearch.cli._output import console, discover_vault, output
+from hyperresearch.models.output import success
 
 app = typer.Typer()
 
@@ -18,9 +18,7 @@ def graph_backlinks(
 ) -> None:
     """Show what links TO this note."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -69,9 +67,7 @@ def graph_outlinks(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show what this note links TO."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -121,9 +117,7 @@ def graph_orphans(
 ) -> None:
     """Find notes with no inbound or outbound links."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(f"""
@@ -153,9 +147,7 @@ def graph_broken(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Find broken [[links]] that don't resolve."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute("""
@@ -195,9 +187,7 @@ def graph_stub(
 ) -> None:
     """Create stub notes for all broken [[links]]."""
     from hyperresearch.core.stubs import create_stubs
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -247,9 +237,7 @@ def graph_hubs(
 ) -> None:
     """Show most-linked-to notes."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -294,17 +282,8 @@ def graph_rank(
     """
     from hyperresearch.core.graphrank import compute_centrality
     from hyperresearch.core.quality import compute_quality_scores
-    from hyperresearch.core.vault import Vault, VaultError
 
-    try:
-        vault = Vault.discover()
-    except VaultError as e:
-        if json_output:
-            output(error(str(e), "NO_VAULT"), json_mode=True)
-        else:
-            console.print(f"[red]Error:[/] {e}")
-        raise typer.Exit(1)
-
+    vault = discover_vault(json_output)
     vault.auto_sync()
     conn = vault.db
     ranked = compute_centrality(conn)

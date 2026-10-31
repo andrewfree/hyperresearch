@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.core.db import parent_subtree_clause
 from hyperresearch.models.output import error, success
 
@@ -30,9 +30,7 @@ def export_json(
     json_output: bool = typer.Option(False, "--json", help="JSON output for status"),
 ) -> None:
     """Export all notes as structured JSON."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     notes = []
@@ -79,9 +77,7 @@ def export_vault(
     """Export a subset of notes to another directory."""
     import shutil
 
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     clauses = ["n.type NOT IN ('index')"]
