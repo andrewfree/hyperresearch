@@ -178,6 +178,32 @@ class NoteMeta(BaseModel):
                 tags.append(tag)
         return tags
 
+    @field_validator(
+        "title", "source", "source_domain", "fetch_provider", "parent", "summary",
+        "raw_file", "doi", "venue", "oa_url", "oa_source", "oa_version", "oa_license",
+        "oa_recovery_kind",
+        mode="before",
+    )
+    @classmethod
+    def scalar_strings(cls, v: Any) -> Any:
+        # `title: 1984` or `summary: 42` failed validation and kept the note
+        # out of the index on every sync.
+        return _yaml_scalar_str(v)
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def alias_list(cls, v: Any) -> Any:
+        # As for tags: `aliases: foo` is a comma list and an empty `aliases:`
+        # is none, and numbers are read as strings. Unlike tags, case is kept.
+        # Anything else (a boolean, a mapping) is left for pydantic to reject.
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [a.strip() for a in v.split(",") if a.strip()]
+        if not isinstance(v, list | tuple | set):
+            v = [v]
+        return [_yaml_scalar_str(item) for item in v]
+
     @field_validator("id", mode="before")
     @classmethod
     def ensure_slug(cls, v: Any) -> Any:
