@@ -10,6 +10,7 @@ from hyperresearch.core.config import VaultConfig
 from hyperresearch.core.db import get_connection, init_schema
 
 HYPERRESEARCH_DIR = ".hyperresearch"
+VAULT_INTERNAL_DIRS = (HYPERRESEARCH_DIR, ".git", ".claude", ".codex", ".agents")
 CONFIG_FILE = "config.toml"
 DB_FILE = "hyperresearch.db"
 

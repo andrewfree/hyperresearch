@@ -16,6 +16,7 @@ from hyperresearch.core.patterns import (
     is_valid_wiki_link_target,
     strip_code,
 )
+from hyperresearch.core.vault import VAULT_INTERNAL_DIRS
 
 
 @dataclass
@@ -99,9 +100,7 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
         return plan
 
     runs_dir = kb_dir / "runs"
-    internal_dirs = tuple((vault.root / name).resolve() for name in (
-        ".hyperresearch", ".git", ".claude", ".codex", ".agents",
-    ))
+    internal_dirs = tuple((vault.root / name).resolve() for name in VAULT_INTERNAL_DIRS)
     disk_files: dict[str, float] = {}
     for md_file in kb_dir.rglob("*.md"):
         # Older vaults can use the root as research_dir. Templates and
