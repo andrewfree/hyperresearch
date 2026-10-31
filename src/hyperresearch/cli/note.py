@@ -42,8 +42,10 @@ def _open_in_editor(path: Path) -> None:
             argv = [editor]
         elif os.name == "nt":
             # posix=False keeps the quotes around a quoted path; drop them.
+            # Single ones too: Git for Windows writes its editor commands as
+            # 'C:/Program Files/Notepad++/notepad++.exe' -multiInst.
             argv = [
-                a[1:-1] if len(a) > 1 and a[0] == a[-1] == '"' else a
+                a[1:-1] if len(a) > 1 and a[0] == a[-1] and a[0] in "\"'" else a
                 for a in shlex.split(editor, posix=False)
             ]
         else:
