@@ -246,6 +246,14 @@ def fetch(
             console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
 
+    parse_error = _url_parse_error(url)
+    if parse_error:
+        if json_output:
+            output(error(parse_error, "INVALID_URL"), json_mode=True)
+        else:
+            console.print(f"[red]Invalid URL:[/] {escape(parse_error)}")
+        raise typer.Exit(1)
+
     vault.auto_sync()
     conn = vault.db
 
@@ -636,6 +644,20 @@ def fetch(
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
             console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{note_id}/")
+
+
+def _url_parse_error(url: str) -> str | None:
+    """Why urlparse rejects ``url``, or None when it parses.
+
+    urlparse raises ValueError for some malformed netlocs (an unbalanced IPv6
+    bracket gives "Invalid IPv6 URL"). Several fetch steps parse the URL
+    outside any handler, so such a URL is refused before any of them runs.
+    """
+    try:
+        urlparse(url)
+    except ValueError as exc:
+        return f"cannot parse URL {url!r}: {exc}"
+    return None
 
 
 def _save_raw_file(vault, note_path: Path, result) -> str | None:

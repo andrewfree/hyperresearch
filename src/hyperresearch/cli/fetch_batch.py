@@ -44,6 +44,7 @@ def fetch_batch(
         _escalate_blocked,
         _junk_escalation_reason,
         _save_raw_file,
+        _url_parse_error,
     )
     from hyperresearch.core.vault import Vault, VaultError
     from hyperresearch.web.base import get_provider
@@ -79,6 +80,23 @@ def fetch_batch(
     vault.auto_sync()
     conn = vault.db
 
+    failed_urls: list[dict] = []  # surfaced in JSON output so callers see what was lost
+
+    def _fail(url: str, error: str, kind: str) -> None:
+        failed_urls.append({"url": url, "error": error, "phase": kind})
+        if not json_output:
+            console.print(f"  [red]Failed ({kind}):[/] {url} — {error}")
+
+    # A URL urlparse rejects would crash the provider, extract_doi and the
+    # visible-domain check alike, and take the whole batch down with it.
+    valid_urls = []
+    for url in all_urls:
+        parse_error = _url_parse_error(url)
+        if parse_error:
+            _fail(url, parse_error, "input")
+        else:
+            valid_urls.append(url)
+
     def _needs_visible(fetch_url: str) -> bool:
         if not vault.config.web_profile:
             return False
@@ -95,7 +113,7 @@ def fetch_batch(
 
     # Filter out already-fetched URLs
     new_urls = []
-    for url in all_urls:
+    for url in valid_urls:
         # An orphaned row (note deleted) is not a duplicate; only a live note skips
         existing = existing_live_note_for_url(conn, url)
         if existing:
@@ -104,14 +122,14 @@ def fetch_batch(
         else:
             new_urls.append(url)
 
-    if not new_urls:
+    if not new_urls and not failed_urls:
         if json_output:
             output(success({"notes_created": [], "skipped": len(all_urls)}, vault=str(vault.root)), json_mode=True)
         else:
             console.print("[dim]All URLs already fetched.[/]")
         return
 
-    if not json_output:
+    if new_urls and not json_output:
         console.print(f"[bold]Fetching {len(new_urls)} URLs with {prov.name}...[/]")
 
     # Split URLs into normal (headless batch) and auth-aggressive (visible, sequential)
@@ -121,12 +139,6 @@ def fetch_batch(
     # (requested url, result). The requested url is what gets recorded and
     # deduped on, as in cli/fetch.py; result.url can be a redirect target.
     results = []
-    failed_urls: list[dict] = []  # surfaced in JSON output so callers see what was lost
-
-    def _fail(url: str, error: str, kind: str) -> None:
-        failed_urls.append({"url": url, "error": error, "phase": kind})
-        if not json_output:
-            console.print(f"  [red]Failed ({kind}):[/] {url} — {error}")
 
     def _fetch_one(provider, url: str, kind: str) -> None:
         try:
@@ -186,7 +198,11 @@ def fetch_batch(
     # in waves through this command, so one bot-walled publisher silently drops
     # a whole cluster of papers at once.
     pending = []  # (url, result, oa_location, rescue_reason)
-    blocked = [(f["url"], f"fetch failed: {f['error']}", None) for f in failed_urls]
+    # An unparseable input has no DOI to rescue it with.
+    blocked = [
+        (f["url"], f"fetch failed: {f['error']}", None)
+        for f in failed_urls if f["phase"] != "input"
+    ]
     # url -> (failed_urls phase, escalation reason or None, error) for a result
     # one of cli/fetch.py's gates refused. A fetch that raised is in
     # failed_urls already, so it has no entry here.
@@ -429,7 +445,7 @@ def fetch_batch(
         plan = compute_sync_plan(vault)
         if plan.to_delete:
             execute_sync(vault, plan)
-    skipped = len(all_urls) - len(new_urls) + len(lost_races)
+    skipped = len(valid_urls) - len(new_urls) + len(lost_races)
 
     # Phase 4: Auto-link across all new notes
     if created_notes:

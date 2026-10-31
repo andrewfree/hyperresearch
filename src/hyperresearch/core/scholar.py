@@ -75,8 +75,13 @@ def extract_doi(
     arXiv ids are returned as "arXiv:<id>" so downstream code can route them
     to Semantic Scholar (OpenAlex has no arXiv-id lookup scheme).
     """
-    parsed = urlparse(url)
-    if "doi.org" in parsed.netloc.lower():
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        # A malformed netloc (unbalanced IPv6 bracket) holds no URL DOI, and
+        # the meta tags and body may still carry one.
+        parsed = None
+    if parsed is not None and "doi.org" in parsed.netloc.lower():
         m = DOI_RE.search(parsed.path)
         if m:
             return _clean_doi(m.group(1))
