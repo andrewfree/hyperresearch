@@ -3662,6 +3662,9 @@ def install_hooks(
 ) -> list[str]:
     """Install the hook + skills + subagents for one agent runtime. Returns actions taken.
 
+    A hook the installer refused to write comes back as a `HookRefusal`
+    among the actions; report it apart from the files that were written.
+
     Skill and agent prompts are rendered from the given pipeline profile
     (plus any `[profile.*]` overlays in the vault's config.toml) and for the
     given platform ("claude" — Claude Code, or "codex" — OpenAI Codex CLI).
@@ -3789,6 +3792,15 @@ def _prune_global_step_skills(home: Path) -> str | None:
     return f"Pruned {len(pruned)} global step-skill dirs (now per-project): {', '.join(pruned[:3])}{'...' if len(pruned) > 3 else ''}"
 
 
+class HookRefusal(str):
+    """An installer's report that it did NOT install a hook, and why.
+
+    Still a str, so it prints and joins like any other action, but callers can
+    tell it apart from a file that was written: reporting it as installed (or
+    counting it as re-rendered) hides that the hook is missing.
+    """
+
+
 def _write_hook_script(vault_root: Path, hpr_path: str) -> Path:
     """Write the hook JS script to .hyperresearch/hook.js."""
     hook_dir = vault_root / ".hyperresearch"
@@ -3875,7 +3887,7 @@ def _install_claude_hook(vault_root: Path, hpr_path: str) -> str | None:
     settings_path = settings_dir / "settings.json"
     settings, problem = _load_hook_config(settings_path)
     if problem:
-        return (
+        return HookRefusal(
             f"Claude Code: .claude/settings.json {problem}, so the PreToolUse hook was "
             "NOT installed and the file was left unchanged. Fix it, then re-run install"
         )
@@ -4064,7 +4076,7 @@ def _install_codex_stop_hook(vault_root: Path, hpr_path: str) -> str | None:
         # A vault at the home directory: its .codex/ is Codex's user-level
         # config, where the hook would gate every Codex session on the
         # machine. The gate finds this vault from any directory below it.
-        return (
+        return HookRefusal(
             f"Codex: Stop hook NOT installed — {codex_dir} is Codex's user-level "
             "config, where it would run in every Codex session"
         )
@@ -4072,7 +4084,7 @@ def _install_codex_stop_hook(vault_root: Path, hpr_path: str) -> str | None:
     hooks_path = codex_dir / "hooks.json"
     settings, problem = _load_hook_config(hooks_path)
     if problem:
-        return (
+        return HookRefusal(
             f"Codex: .codex/hooks.json {problem}, so the Stop hook was NOT installed "
             "and the file was left unchanged. Fix it, then re-run install"
         )
@@ -4087,7 +4099,7 @@ def _install_codex_stop_hook(vault_root: Path, hpr_path: str) -> str | None:
         # Codex's workspace-write sandbox keeps .codex/ read-only, so the
         # first-run bootstrap inside a session cannot add the hook.
         hpr = hpr_path.replace("\\", "/")
-        return (
+        return HookRefusal(
             f"Codex: .codex/hooks.json is not writable ({exc.strerror or exc}) — Stop hook "
             f"NOT installed. Re-run `{hpr} install --steps-only . --target codex` outside "
             "the Codex sandbox to add it"
