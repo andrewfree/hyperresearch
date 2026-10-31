@@ -174,16 +174,22 @@ def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, st
     'attention AND -' becomes 'attention'. Operators left side by side keep
     the later one, so 'AI AND / OR ML' becomes 'AI OR ML' and 'a AND NOT b',
     which FTS5 rejects, becomes 'a NOT b'.
+
+    A NOT that still has an operand after it is never dropped or replaced:
+    'NOT foo AND bar' searched as 'foo AND bar' would return exactly the
+    notes it excludes. A leading NOT, or one followed by another operator,
+    is kept for FTS5 to reject; only a trailing NOT, with nothing left to
+    exclude, goes.
     """
     out: list[tuple[str, str]] = []
     for item in items:
         if item[0] != "op":
             out.append(item)
-        elif out and out[-1][0] == "op":
+        elif out and out[-1][0] == "op" and out[-1][1] != "NOT":
             out[-1] = item
-        elif out:
+        elif out or item[1] == "NOT":
             out.append(item)
-    if out and out[-1][0] == "op":
+    while out and out[-1][0] == "op":
         out.pop()
     return out
 
