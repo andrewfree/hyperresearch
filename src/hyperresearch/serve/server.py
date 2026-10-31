@@ -561,7 +561,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
 
         from hyperresearch.search.fts import SearchQueryError, search_fts
         try:
-            results = search_fts(self.db, query, limit=50)
+            results = search_fts(self.db, query, limit=50, snippet_start="\x02", snippet_end="\x03")
         except SearchQueryError as e:
             body += f"<p>{html_mod.escape(str(e))}</p>"
             self._send(200, body, "Search")
@@ -576,8 +576,8 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             # </mark> we inject here would finish the tag for it.
             snippet = (
                 html_mod.escape(r["snippet"])
-                .replace("&gt;&gt;&gt;", "<mark>")
-                .replace("&lt;&lt;&lt;", "</mark>")
+                .replace("\x02", "<mark>")
+                .replace("\x03", "</mark>")
             )
             body += (
                 f'<div class="result"><div class="title">'
