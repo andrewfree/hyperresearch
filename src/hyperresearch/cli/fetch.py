@@ -34,28 +34,25 @@ SKIP_URL_PATTERNS = (
 
 
 def _append_suggested_by_to_existing(
-    vault_root: Path,
+    vault,
     note_id: str,
     suggested_by: list[str],
     reason: str | None,
-) -> int:
+) -> int | None:
     """Append `*Suggested by [[src]] — reason*` breadcrumb lines to an existing note.
 
     Idempotent: if a breadcrumb for a given source id already exists anywhere
     in the body, it is not re-added. Returns the number of new breadcrumbs
-    actually added.
+    actually added, or None when the note's file cannot be found.
     """
-    # Find the note file — scan research/notes/ for `<note-id>.md` or walk subdirs
     from hyperresearch.core.frontmatter import parse_frontmatter, serialize_frontmatter
 
-    note_path = None
-    for candidate in vault_root.rglob(f"{note_id}.md"):
-        # Require it to be under a notes directory so we don't match index files
-        if "notes" in candidate.parts:
-            note_path = candidate
-            break
-    if note_path is None:
-        return 0
+    # The index knows the note's file. A filename is not its id once the id
+    # was edited (#159), so searching for `<note-id>.md` missed such a note.
+    row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
+    note_path = vault.root / row["path"] if row else None
+    if note_path is None or not note_path.is_file():
+        return None
 
     text = note_path.read_text(encoding="utf-8-sig")
     meta, body = parse_frontmatter(text)
@@ -271,8 +268,19 @@ def fetch(
         # check for dupes first.
         if suggested_by:
             added = _append_suggested_by_to_existing(
-                vault.root, note_id, suggested_by, suggested_by_reason
+                vault, note_id, suggested_by, suggested_by_reason
             )
+            if added is None:
+                # Not "already present": nothing was written anywhere.
+                msg = (
+                    f"URL already fetched as note '{note_id}', but its file could not "
+                    "be found; no breadcrumb was added. Run 'hyperresearch sync' and retry."
+                )
+                if json_output:
+                    output(error(msg, "NOTE_NOT_FOUND"), json_mode=True)
+                else:
+                    console.print(f"[red]Error:[/] {escape(msg)}")
+                raise typer.Exit(1)
             # Re-sync so the new wiki-link gets picked up by the link extractor
             plan = compute_sync_plan(vault)
             if plan.to_update:
