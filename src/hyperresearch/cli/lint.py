@@ -7,6 +7,7 @@ import re
 from datetime import UTC
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.core.hooks import SCAFFOLD_ONLY_SECTION_HEADERS
@@ -1829,7 +1830,11 @@ def lint(
             style = severity_style.get(issue.get("severity", "info"), "dim")
             loc = issue.get("note_path", issue.get("note_id", ""))
             line = f" line {issue['line']}" if issue.get("line") else ""
-            console.print(f"  [{style}]{issue['rule']}[/] {loc}{line}: {issue['message']}")
+            # Messages quote vault text such as '[[ref]]', which Rich would
+            # read as a style tag and drop.
+            console.print(
+                f"  [{style}]{issue['rule']}[/] {escape(str(loc))}{line}: {escape(issue['message'])}"
+            )
 
         console.print(
             f"\n[bold]Summary:[/] {summary['errors']} errors, "
