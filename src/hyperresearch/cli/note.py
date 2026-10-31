@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from datetime import UTC
@@ -277,9 +278,9 @@ def note_show(
         if not row:
             return None
         tag_list = vault.db.execute(
-            "SELECT GROUP_CONCAT(tag, ',') as tl FROM tags WHERE note_id = ?", (nid,)
+            "SELECT json_group_array(tag) as tl FROM tags WHERE note_id = ?", (nid,)
         ).fetchone()
-        tags = tag_list["tl"].split(",") if tag_list and tag_list["tl"] else []
+        tags = json.loads(tag_list["tl"]) if tag_list and tag_list["tl"] else []
         data = {
             "id": row["id"], "title": row["title"], "path": row["path"],
             "status": row["status"], "type": row["type"], "tags": tags,
@@ -466,14 +467,14 @@ def note_list(
     effective_limit = 999999 if all_notes else limit
     rows = vault.db.execute(
         f"""SELECT n.*,
-            (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+            (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM notes n WHERE {where} ORDER BY {order} LIMIT ?""",
         [*params, effective_limit],
     ).fetchall()
 
     notes = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         notes.append({
             "id": row["id"],
             "title": row["title"],
