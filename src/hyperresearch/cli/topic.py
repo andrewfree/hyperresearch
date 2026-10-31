@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.models.output import success
 
 app = typer.Typer()
@@ -16,9 +16,7 @@ def topic_tree(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show the full topic hierarchy as a tree."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -90,9 +88,7 @@ def topic_list(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Flat list of all topics with note counts."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -122,9 +118,7 @@ def topic_show(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show all notes under a topic (including subtopics)."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     # Match exact and subtopics
