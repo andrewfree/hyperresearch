@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import re
+import socket
 import sqlite3
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from hyperresearch.serve.renderer import render_markdown
+from hyperresearch.serve.renderer import path_href, render_markdown
+
+# BSD-derived stacks (macOS included) let a SO_REUSEADDR bind to a specific
+# address succeed beside another socket's wildcard bind on the same port.
+_REUSEADDR_BINDS_BESIDE_WILDCARD = sys.platform == "darwin" or "bsd" in sys.platform
+
+# DNS rebinding: a page on an attacker's domain can re-point that name at
+# 127.0.0.1 and then read the vault as same-origin, but the browser still
+# sends the attacker's hostname. Only loopback names are answered. Any port
+# is accepted, so a tunnelled local port (ssh -L 9000:...) keeps working.
+_LOOPBACK_HOST_RE = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?", re.IGNORECASE)
 
 # -- Vintage cream & dark brown theme --
 CSS = """
@@ -331,7 +343,7 @@ GRAPH_JS = """
   });
   canvas.addEventListener('mouseup', function() { mouseDown = false; });
   canvas.addEventListener('click', function() {
-    if (hoverNode) window.location.href = '/note/' + hoverNode.id;
+    if (hoverNode) window.location.href = '/note/' + encodeURIComponent(hoverNode.id);
   });
 
   searchBox.addEventListener('input', function() { searchTerm = this.value; draw(); });
@@ -362,7 +374,20 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
                 self._db.close()
                 self._db = None
 
+    def _addressed_to_loopback(self) -> bool:
+        # An absolute-form target ("GET http://host/...") names the host too.
+        hosts = self.headers.get_all("Host", [])
+        target_host = urllib.parse.urlsplit(self.path).netloc
+        if target_host:
+            hosts.append(target_host)
+        # No Host at all cannot come from a browser, so it is not a rebinding page.
+        return all(_LOOPBACK_HOST_RE.fullmatch(h.strip()) for h in hosts)
+
     def do_GET(self):
+        if not self._addressed_to_loopback():
+            # Before any page is built: every page's nav lists note titles.
+            self.send_error(403, "Host not allowed")
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -425,7 +450,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             "ORDER BY COALESCE(updated, created) DESC LIMIT 15"
         ).fetchall()
         for r in rows:
-            lines.append(f'<a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>')
+            lines.append(f'<a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>')
         lines.append('</div>')
         lines.append(
             '<div class="nav-bottom">'
@@ -449,7 +474,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         body = "<h1>All Notes</h1>\n<ul>\n"
         for r in rows:
             summary = f' <span style="color:var(--fg-dim);font-size:0.85rem">-- {html_mod.escape(r["summary"] or "")}</span>' if r["summary"] else ""
-            body += f'<li><a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
+            body += f'<li><a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
         body += "</ul>"
         self._send(200, body, "Home")
 
@@ -464,14 +489,28 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             return
 
         tags = [r["tag"] for r in self.db.execute("SELECT tag FROM tags WHERE note_id = ?", (note_id,))]
+        # links holds a row per ref per line; the panel shows one entry per note.
         backlinks = self.db.execute(
-            "SELECT l.source_id, n.title FROM links l "
+            "SELECT DISTINCT l.source_id, n.title FROM links l "
             "JOIN notes n ON l.source_id = n.id WHERE l.target_id = ? ORDER BY n.title",
             (note_id,),
         ).fetchall()
 
-        html_body = render_markdown(row["body"])
-        tags_html = " ".join(f'<a href="/tag/{html_mod.escape(t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
+        # Sync resolved each ref by id, title, alias or case; link to its result.
+        resolved = {
+            r["target_ref"]: r["target_id"]
+            for r in self.db.execute(
+                "SELECT target_ref, target_id FROM links WHERE source_id = ? AND target_id IS NOT NULL",
+                (note_id,),
+            )
+        }
+        html_body = render_markdown(row["body"], resolved)
+        # `note new --body` and MCP create_note store the body as given, with
+        # no "# Title" line, so show the title unless the body opens with one.
+        first_line = next((line for line in row["body"].splitlines() if line.strip()), "")
+        if not re.match(r"#\s+\S", first_line):
+            html_body = f"<h1>{html_mod.escape(row['title'])}</h1>\n{html_body}"
+        tags_html = " ".join(f'<a href="{path_href("/tag/", t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
         status_class = row["status"]
         meta = (
             f'<div class="meta">'
@@ -483,7 +522,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         bl_html = ""
         if backlinks:
             bl_items = "\n".join(
-                f'<li><a href="/note/{html_mod.escape(r["source_id"])}">{html_mod.escape(r["title"])}</a></li>' for r in backlinks
+                f'<li><a href="{path_href("/note/", r["source_id"])}">{html_mod.escape(r["title"])}</a></li>' for r in backlinks
             )
             bl_html = f'<div class="backlinks"><h3>Backlinks</h3><ul>{bl_items}</ul></div>'
         self._send(200, f"{meta}\n{html_body}\n{bl_html}", html_mod.escape(row["title"]))
@@ -498,7 +537,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         body = f"<h1>Tag: {safe_tag}</h1>\n<p>{len(rows)} notes</p>\n<ul>\n"
         for r in rows:
             summary = f' <span style="color:var(--fg-dim);font-size:0.85rem">-- {html_mod.escape(r["summary"] or "")}</span>' if r["summary"] else ""
-            body += f'<li><a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
+            body += f'<li><a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
         body += "</ul>"
         self._send(200, body, f"Tag: {safe_tag}")
 
@@ -508,7 +547,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         ).fetchall()
         body = "<h1>All Tags</h1>\n<ul>\n"
         for r in rows:
-            body += f'<li><a href="/tag/{html_mod.escape(r["tag"])}">{html_mod.escape(r["tag"])}</a> ({r["c"]})</li>\n'
+            body += f'<li><a href="{path_href("/tag/", r["tag"])}">{html_mod.escape(r["tag"])}</a> ({r["c"]})</li>\n'
         body += "</ul>"
         self._send(200, body, "Tags")
 
@@ -542,7 +581,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             )
             body += (
                 f'<div class="result"><div class="title">'
-                f'<a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a></div>'
+                f'<a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a></div>'
                 f'<div class="snippet">{snippet}</div></div>\n'
             )
         body += "</div>"
@@ -589,7 +628,12 @@ class HyperresearchServer(ThreadingHTTPServer):
 
     HTTPServer sets ``allow_reuse_address`` (SO_REUSEADDR) so a restarted
     server can reclaim a port whose previous owner is still in TIME_WAIT.
-    That is all the option does on POSIX. Winsock gives SO_REUSEADDR a
+    On Linux a bind with the option still fails while another socket
+    listens on an overlapping address. BSD-derived stacks, macOS included,
+    also let it bind 127.0.0.1 beside another process's wildcard
+    (0.0.0.0) listener on the same port, and the more specific bind then
+    receives that process's 127.0.0.1 connections; ``server_bind`` refuses
+    such a port. Winsock gives SO_REUSEADDR a
     different meaning: the bind is allowed to succeed on a port another
     socket is actively listening on, so the port is shared rather than
     reclaimed, and neither listener is guaranteed the connections. With
@@ -600,6 +644,23 @@ class HyperresearchServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = sys.platform != "win32"
+    # socketserver's default listen backlog is 5; past it macOS resets new
+    # connections, so a page load plus a few concurrent clients could fail.
+    request_queue_size = 128
+
+    def server_bind(self):
+        port = self.server_address[1]
+        if _REUSEADDR_BINDS_BESIDE_WILDCARD and port and self.address_family == socket.AF_INET:
+            # A SO_REUSEADDR bind to the wildcard itself still passes over
+            # TIME_WAIT but fails while a socket holds 0.0.0.0 on this port,
+            # including a dual-stack "::" listener. Those are the listeners
+            # that answer 127.0.0.1. An IPv6-only listener never sees that
+            # traffic, so it is not probed. A port=0 bind never lands on a
+            # held port, so it needs no probe.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("0.0.0.0", port))
+        super().server_bind()
 
 
 def run_server(vault, port: int = 8080, open_browser: bool = False) -> int:
