@@ -65,6 +65,11 @@ class WebResult:
     screenshot: bytes | None = None  # PNG screenshot of the rendered page
     raw_bytes: bytes | None = None  # Raw file bytes (PDF, etc.)
     raw_content_type: str | None = None  # MIME type of raw file (application/pdf, etc.)
+    # The input URL this result answers, set by fetch_many: its results come
+    # back in completion order and `url` may be a redirect or PDF-lane target,
+    # so neither position nor `url` says which input a result belongs to.
+    # None means `url` is the requested URL.
+    requested_url: str | None = None
 
     @property
     def domain(self) -> str:

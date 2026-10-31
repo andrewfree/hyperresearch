@@ -48,6 +48,9 @@ def fetch_batch(
             line = line.strip()
             if line and line.startswith("http"):
                 all_urls.append(line)
+    # Each distinct URL once: a repeat would be fetched and written as a second
+    # note whose sources row Phase 3 cannot insert.
+    all_urls = list(dict.fromkeys(all_urls))
 
     if not all_urls:
         if json_output:
@@ -107,12 +110,14 @@ def fetch_batch(
     normal_urls = [u for u in new_urls if not _needs_visible(u)]
     visible_urls = [u for u in new_urls if _needs_visible(u)]
 
+    # (requested url, result). The requested url is what gets recorded and
+    # deduped on, as in cli/fetch.py; result.url can be a redirect target.
     results = []
     failed_urls: list[dict] = []  # surfaced in JSON output so callers see what was lost
 
     def _fetch_one(provider, url: str, kind: str) -> None:
         try:
-            results.append(provider.fetch(url))
+            results.append((url, provider.fetch(url)))
         except Exception as exc:
             failed_urls.append({"url": url, "error": str(exc), "phase": kind})
             if not json_output:
@@ -122,7 +127,11 @@ def fetch_batch(
     if normal_urls:
         if hasattr(prov, "fetch_many"):
             try:
-                results.extend(prov.fetch_many(normal_urls))
+                # fetch_many answers in completion order, so each result names
+                # the input it belongs to.
+                results.extend(
+                    (r.requested_url or r.url, r) for r in prov.fetch_many(normal_urls)
+                )
             except Exception as e:
                 # fetch_many can return zero results on a single bad URL
                 # inside the batch comprehension. Fall back to per-URL so we
@@ -159,8 +168,7 @@ def fetch_batch(
     pending = []  # (url, result, oa_location, rescue_reason)
     blocked = [(f["url"], f"fetch failed: {f['error']}", None) for f in failed_urls]
 
-    for result in results:
-        url = result.url
+    for url, result in results:
         if result.looks_like_login_wall(url, vault.config.junk):
             blocked.append((url, f"login wall: {result.title}", result.raw_html))
             continue
@@ -292,6 +300,7 @@ def fetch_batch(
 
     # Phase 3: Bulk-insert source records
     created_notes = []
+    lost_races = []  # (note_path, url, winner note id)
     for note_path, url, result, domain, content_hash, oa_location, rescue_reason in note_files:
         note_id = note_path.stem
         conn.execute(
@@ -303,6 +312,13 @@ def fetch_batch(
         reclaim_orphaned_source_row(
             conn, url, note_id, domain, result.fetched_at.isoformat(), prov.name, content_hash
         )
+        # Another fetch can record the url between the duplicate check and the
+        # INSERT above, which is then a no-op. As in cli/fetch.py, the winner
+        # keeps the url and this batch's note goes.
+        winner = conn.execute("SELECT note_id FROM sources WHERE url = ?", (url,)).fetchone()
+        if winner is not None and winner["note_id"] != note_id:
+            lost_races.append((note_path, url, winner["note_id"]))
+            continue
 
         # Save assets if requested
         if save_assets:
@@ -336,6 +352,18 @@ def fetch_batch(
 
     conn.commit()
 
+    # Drop the race losers after the commit: the re-sync cannot run inside the
+    # transaction Phase 3's inserts opened.
+    if lost_races:
+        for note_path, url, winner_id in lost_races:
+            note_path.unlink(missing_ok=True)
+            if not json_output:
+                console.print(f"  [dim]Skip:[/] {url} (already fetched as {winner_id})")
+        plan = compute_sync_plan(vault)
+        if plan.to_delete:
+            execute_sync(vault, plan)
+    skipped = len(all_urls) - len(new_urls) + len(lost_races)
+
     # Phase 4: Auto-link across all new notes
     if created_notes:
         from hyperresearch.core.linker import auto_link
@@ -352,7 +380,7 @@ def fetch_batch(
     data = {
         "notes_created": created_notes,
         "total_fetched": len(created_notes),
-        "skipped": len(all_urls) - len(new_urls),
+        "skipped": skipped,
         "failed_urls": failed_urls,
         "oa_recovered": oa_recovered,
         "oa_rescued": oa_rescued,
@@ -363,7 +391,7 @@ def fetch_batch(
     else:
         msg = (
             f"\n[bold]Done:[/] {len(created_notes)} notes created, "
-            f"{len(all_urls) - len(new_urls)} skipped (already fetched)"
+            f"{skipped} skipped (already fetched)"
         )
         if failed_urls:
             msg += f", [red]{len(failed_urls)} failed[/]"
