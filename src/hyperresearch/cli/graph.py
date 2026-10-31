@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -109,7 +110,9 @@ def graph_outlinks(
         for ol in outlinks:
             status = "[green]OK[/]" if ol["resolved"] else "[red]BROKEN[/]"
             title = ol.get("target_title") or ol["target_ref"]
-            console.print(f"  {status} [[{ol['target_ref']}]] → {title}")
+            # Escaped: Rich reads the '[ref]' inside '[[ref]]' as a style tag.
+            link = escape("[[" + ol["target_ref"] + "]]")
+            console.print(f"  {status} {link} → {escape(title)}")
 
 
 @app.command("orphans")
@@ -181,10 +184,8 @@ def graph_broken(
             return
         console.print(f"[bold red]Broken links ({len(broken)}):[/]")
         for b in broken:
-            console.print(
-                f"  [cyan]{b['source_id']}[/] line {b['line_number']}: "
-                f"[[{b['target_ref']}]]"
-            )
+            link = escape("[[" + b["target_ref"] + "]]")
+            console.print(f"  [cyan]{b['source_id']}[/] line {b['line_number']}: {link}")
 
 
 @app.command("stub")

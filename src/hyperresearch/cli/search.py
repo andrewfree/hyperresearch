@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -144,7 +145,8 @@ def search(
             if json_output:
                 output(error(str(e), "EMBEDDINGS_DISABLED"), json_mode=True)
             else:
-                console.print(f"[red]Error:[/] {e}")
+                # Escaped: the message names the '[embeddings]' config section.
+                console.print(f"[red]Error:[/] {escape(str(e))}")
             raise typer.Exit(1)
 
         fused = reciprocal_rank_fusion(
