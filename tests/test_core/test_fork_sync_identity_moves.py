@@ -75,7 +75,8 @@ def _assert_settled(vault) -> None:
     assert plan.to_add == [] and plan.to_update == [] and plan.to_delete == []
 
 
-def test_sync_keeps_a_moved_notes_rows_when_a_new_file_reuses_its_path(tmp_vault):
+@pytest.mark.parametrize("same_mtime", [False, True], ids=["mtimes-apart", "same-mtime"])
+def test_sync_keeps_a_moved_notes_rows_when_a_new_file_reuses_its_path(tmp_vault, same_mtime):
     """`paper.md` moves to `moved.md` and a new, unrelated `paper.md` takes
     its place. The paper's claim and sources row stay with the paper at its
     new path; the new file is a note of its own."""
@@ -85,7 +86,8 @@ def test_sync_keeps_a_moved_notes_rows_when_a_new_file_reuses_its_path(tmp_vault
     _seed(tmp_vault, "paper")
 
     os.rename(notes / "paper.md", notes / "moved.md")
-    _note(notes / "paper.md", "replacement", "Replacement", "A new file.", T0 + 10)
+    _note(notes / "paper.md", "replacement", "Replacement", "A new file.",
+          T0 if same_mtime else T0 + 10)
     result = _sync(tmp_vault)
 
     assert result.errors == []
