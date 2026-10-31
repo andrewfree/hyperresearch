@@ -304,27 +304,77 @@ def inject_agent_docs(vault_root: Path, platform: str = "claude") -> list[str]:
     replaced. GEMINI.md and .github/copilot-instructions.md are never
     created, and pre-existing copies are left untouched.
     """
-    from hyperresearch.core.platforms import CODEX, check_platform, paths_for
+    from hyperresearch.core.platforms import PLATFORMS, check_platform, paths_for
 
     check_platform(platform)
     hpr_path = _resolve_executable()
     # Use forward slashes — bash on Windows eats backslashes
     hpr_path = hpr_path.replace("\\", "/")
-    # No date interpolation here: a `Today is YYYY-MM-DD` line in the
-    # cached prefix would bust Claude Code's prompt cache once per day.
-    template = HYPERRESEARCH_CODEX_BLURB if platform == CODEX else HYPERRESEARCH_BLURB
-    blurb = template.format(
-        marker=HYPERRESEARCH_SECTION_MARKER,
-        end_marker=HYPERRESEARCH_SECTION_END,
-        hpr=hpr_path,
-    )
 
     docs_file = paths_for(platform).docs_file
+    # CLAUDE.md symlinked to AGENTS.md is one file with one marked section.
+    # Writing one runtime's blurb there replaced the other's, so Claude Code
+    # read Codex instructions and every install rewrote the file. When the
+    # names are one file, the section carries every runtime installed here.
+    target = vault_root / docs_file
+    sharing = [
+        p for p in PLATFORMS if _same_file(vault_root / paths_for(p).docs_file, target)
+    ]
+    if len(sharing) > 1:
+        from hyperresearch.core.hooks import installed_platforms
+
+        installed = {platform, *installed_platforms(vault_root)}
+        blurb = _render_blurb([p for p in sharing if p in installed], hpr_path)
+    else:
+        blurb = _render_blurb([platform], hpr_path)
+
     modified: list[str] = []
     result = _inject_into_file(vault_root / docs_file, blurb, docs_file)
     if result:
         modified.append(result)
     return modified
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if a == b:
+        return True
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError:
+        return False
+
+
+_SECTION_HEADING = "## Research Base (hyperresearch)"
+_PLATFORM_LABELS = {"claude": "Claude Code", "codex": "Codex"}
+
+
+def _render_blurb(platforms: list[str], hpr_path: str) -> str:
+    """The marked section for one runtime, or for several sharing one file."""
+    from hyperresearch.core.platforms import CODEX, paths_for
+
+    # No date interpolation here: a `Today is YYYY-MM-DD` line in the
+    # cached prefix would bust Claude Code's prompt cache once per day.
+    def template(platform: str) -> str:
+        return HYPERRESEARCH_CODEX_BLURB if platform == CODEX else HYPERRESEARCH_BLURB
+
+    if len(platforms) == 1:
+        return template(platforms[0]).format(
+            marker=HYPERRESEARCH_SECTION_MARKER,
+            end_marker=HYPERRESEARCH_SECTION_END,
+            hpr=hpr_path,
+        )
+    parts = []
+    for platform in platforms:
+        body = template(platform).format(marker="", end_marker="", hpr=hpr_path).strip()
+        label = _PLATFORM_LABELS[platform]
+        parts.append(body.replace(_SECTION_HEADING, f"{_SECTION_HEADING} for {label}", 1))
+    names = " and ".join(paths_for(p).docs_file for p in platforms)
+    return (
+        f"{HYPERRESEARCH_SECTION_MARKER}\n"
+        f"This file is both {names}. Follow the section for the agent you are running in.\n\n"
+        + "\n\n".join(parts)
+        + f"\n{HYPERRESEARCH_SECTION_END}\n"
+    )
 
 
 def _inject_into_file(filepath: Path, blurb: str, filename: str) -> str | None:
