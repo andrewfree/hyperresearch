@@ -6,11 +6,20 @@ import json
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer()
+
+
+def _same_dir(path: Path, other: Path) -> bool:
+    """Whether `path` exists and is the same directory as `other`."""
+    try:
+        return path.samefile(other)
+    except OSError:
+        return False
 
 
 @app.command("json")
@@ -91,6 +100,24 @@ def export_vault(
     rows = vault.db.execute(f"SELECT id, path, title FROM notes n WHERE {where}", params).fetchall()
 
     out_dir = Path(output_path).resolve()
+    # Into the vault root every copy is its own source file (copy2 raised
+    # SameFileError); under research/ sync would index the copies as
+    # duplicate notes. Compared as directories, not as strings: on a
+    # case-insensitive filesystem resolve() keeps the case that was typed,
+    # so ./RESEARCH/x is research/x but its path does not say so.
+    if _same_dir(out_dir, vault.root) or any(
+        _same_dir(d, vault.research_dir) for d in (out_dir, *out_dir.parents)
+    ):
+        msg = (
+            f"Cannot export into the vault: {out_dir} is the vault root or inside "
+            f"{vault.config.research_dir}/. Choose a directory outside it."
+        )
+        if json_output:
+            output(error(msg, "EXPORT_INTO_VAULT"), json_mode=True)
+        else:
+            console.print(f"[red]{escape(msg)}[/]")
+        raise typer.Exit(1)
+
     exported = []
     for row in rows:
         src = vault.root / row["path"]

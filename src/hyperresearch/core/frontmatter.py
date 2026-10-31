@@ -8,7 +8,13 @@ import yaml
 
 from hyperresearch.models.note import NoteMeta
 
-FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
+# The closing delimiter takes its own line ending and at most the one blank
+# line render_note writes after it. A trailing `\s*` there ran on into the
+# body and ate the first line's indentation, which every metadata-only
+# rewrite (`serialize_frontmatter(meta) + "\n" + body`) then saved.
+FRONTMATTER_RE = re.compile(
+    r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n(?:\r?\n)?|$)", re.DOTALL
+)
 
 
 def parse_frontmatter(content: str) -> tuple[NoteMeta, str]:
