@@ -20,8 +20,9 @@ def create_stubs(
                 vault.temp_dir, title,
                 body=f"# {title}\n\n*Stub - created to resolve a broken link. Expand this note.*\n",
                 note_id=title, status="draft", summary=stub_summary(title),
-                # The resolver compares full refs, including heading fragments.
-                extra_frontmatter={"aliases": [ref for ref in refs if "#" in ref]},
+                # SQLite LOWER only folds ASCII, unlike the grouping above.
+                # Keep every spelling, including full heading fragments.
+                extra_frontmatter={"aliases": [ref for ref in refs if ref != title]},
                 taken_ids=taken,
             )
             note = read_note(path, vault.root)
