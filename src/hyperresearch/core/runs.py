@@ -280,6 +280,11 @@ def _read_manifest(mpath: Path, vault_tag: str) -> dict:
     bad = [k for k, kind in _REQUIRED_FIELDS.items() if not isinstance(manifest.get(k), kind)]
     if bad:
         raise RunError(f"corrupt manifest for run '{vault_tag}': missing or invalid {bad}")
+    if manifest["vault_tag"] != vault_tag:
+        raise RunError(
+            f"run tag collision: requested {vault_tag!r}, manifest belongs to "
+            f"{manifest['vault_tag']!r}"
+        )
     return manifest
 
 
