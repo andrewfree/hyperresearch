@@ -51,6 +51,18 @@ class _UnreadableNewFileError(Exception):
         self.reason = reason
 
 
+def file_line_number(path: Path, body_line: int) -> int:
+    """Translate a cached body line to a line in the source file."""
+    from hyperresearch.core.frontmatter import parse_frontmatter
+
+    try:
+        content = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return body_line
+    _, body = parse_frontmatter(content)
+    return body_line + content[:len(content) - len(body)].count("\n")
+
+
 def _should_exclude(rel_path: str, exclude_parts: list[str]) -> bool:
     """Fast exclusion check — match on first path component."""
     first = rel_path.split("/", 1)[0]
