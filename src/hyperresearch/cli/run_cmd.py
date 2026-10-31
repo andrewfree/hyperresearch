@@ -510,8 +510,9 @@ def run_report(
             console.print(f"[bold]{agg['runs']} runs[/] — ~${agg['total_estimated_usd']} API-equiv, "
                           f"{agg['total_sources']} sources, {agg['total_agents']} agents")
             for r in reports:
-                console.print(f"  [cyan]{r['vault_tag']}[/] {r['status']} ~${r['spend']['estimated_usd']} "
-                              f"{r['spend']['sources_fetched']}src {r['total_wall_minutes']}min")
+                spend = r["spend"]
+                console.print(f"  [cyan]{r['vault_tag']}[/] {r['status']} ~${spend.get('estimated_usd', 0.0)} "
+                              f"{spend.get('sources_fetched', 0)}src {r['total_wall_minutes']}min")
         return
 
     tag = _resolve_tag(vault, vault_tag, json_output)
