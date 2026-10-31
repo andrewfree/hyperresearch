@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 import urllib.parse
+from collections.abc import Mapping
 
 
 def path_href(prefix: str, segment: str) -> str:
@@ -105,8 +106,14 @@ MD_PATTERNS = [
 ]
 
 
-def render_markdown(body: str) -> str:
-    """Convert markdown body to HTML, resolving [[wiki-links]]."""
+def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str:
+    """Convert markdown body to HTML, resolving [[wiki-links]].
+
+    ``resolved`` maps a link's ref, as sync stored it in the links table, to
+    the note id sync resolved it to (by id, title, alias or case). A ref not
+    in it links to its own text.
+    """
+    resolved = resolved or {}
     # Escape HTML first
     text = html.escape(body)
 
@@ -133,7 +140,9 @@ def render_markdown(body: str) -> str:
             target = display = inner
         target = target.strip()
         display = display.strip()
-        return f'<a href="/note/{target}" class="wiki-link">{display}</a>'
+        # Look the ref up the way sync stored it: unescaped, trailing '\' dropped.
+        ref = html.unescape(target).rstrip("\\")
+        return f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
 
     # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
     # The body was escaped, so a raw '"' here is a link rendered above
