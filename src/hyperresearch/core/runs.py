@@ -609,6 +609,21 @@ def latest_run_tag(vault) -> str | None:
     return runs[0]["vault_tag"] if runs else None
 
 
+def resume_run(vault, vault_tag: str) -> dict:
+    """Resume under the manifest lock, leaving reporting paths read-only."""
+    manifest = load_manifest(vault, vault_tag)
+    if manifest["status"] not in ("paused", "blocked", "failed"):
+        return manifest
+    with manifest_lock(vault, vault_tag):
+        # Another resume or abort may have won while we waited for the lock.
+        manifest = load_manifest(vault, vault_tag)
+        if manifest["status"] == "blocked" and manifest.get("blocked_on") in _COUNT_BLOCK_REASONS:
+            return clear_count_block(vault, vault_tag)
+        if manifest["status"] in ("paused", "blocked", "failed"):
+            return set_status(vault, vault_tag, "running")
+        return manifest
+
+
 def resume_position(manifest: dict, required_steps: set[str] | None = None) -> dict:
     """Compute where a run should continue.
 
