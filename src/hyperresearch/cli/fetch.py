@@ -243,7 +243,7 @@ def fetch(
         if json_output:
             output(error(str(e), "NO_VAULT"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
         raise typer.Exit(1)
 
     parse_error = _url_parse_error(url)
@@ -290,7 +290,7 @@ def fetch(
             if json_output:
                 output(success(data, vault=str(vault.root)), json_mode=True)
             else:
-                console.print(f"[yellow]Already fetched:[/] {url} → note '{note_id}'")
+                console.print(f"[yellow]Already fetched:[/] {escape(url)} → note '{escape(note_id)}'")
                 console.print(f"  added {added} backlink(s) to existing note")
             return
 
@@ -300,7 +300,7 @@ def fetch(
                 json_mode=True,
             )
         else:
-            console.print(f"[yellow]Already fetched:[/] {url} → note '{note_id}'")
+            console.print(f"[yellow]Already fetched:[/] {escape(url)} → note '{escape(note_id)}'")
         raise typer.Exit(1)
 
     # Auto-visible for sites that kill headless sessions on first contact
@@ -365,7 +365,7 @@ def fetch(
             if json_output:
                 output(error(str(e), "FETCH_ERROR"), json_mode=True)
             else:
-                console.print(f"[red]Fetch failed:[/] {e}")
+                console.print(f"[red]Fetch failed:[/] {escape(str(e))}")
             raise typer.Exit(1)
 
     # Detect login redirects — abort, but ESCALATE to the browser lane
@@ -386,7 +386,7 @@ def fetch(
             if json_output:
                 output(error(msg, "AUTH_REQUIRED_ESCALATED" if item_id else "AUTH_REQUIRED"), json_mode=True)
             else:
-                console.print(f"[red]Auth required:[/] {msg}")
+                console.print(f"[red]Auth required:[/] {escape(msg)}")
             raise typer.Exit(1)
 
     # Detect junk pages — captcha, error pages, binary garbage, empty content.
@@ -410,7 +410,7 @@ def fetch(
             if json_output:
                 output(error(msg, "JUNK_ESCALATED" if item_id else "JUNK_CONTENT"), json_mode=True)
             else:
-                console.print(f"[yellow]Skipped:[/] {msg}")
+                console.print(f"[yellow]Skipped:[/] {escape(msg)}")
             raise typer.Exit(1)
 
     # Source-ranking capture: DOI/arXiv id + the orchestrator's utility score.
@@ -623,17 +623,19 @@ def fetch(
     if json_output:
         output(success(data, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Saved:[/] {note_title}")
-        console.print(f"  ID: {note_id}")
-        console.print(f"  Source: {url}")
+        # Titles and URLs come from the page: print them, never parse them
+        # as Rich markup (a "[/x]" in a title raised MarkupError).
+        console.print(f"[green]Saved:[/] {escape(note_title)}")
+        console.print(f"  ID: {escape(note_id)}")
+        console.print(f"  Source: {escape(url)}")
         if oa_location is not None:
             console.print(
-                f"  [cyan]Body from:[/] {oa_location.url} "
+                f"  [cyan]Body from:[/] {escape(oa_location.url)} "
                 f"([bold]{oa_location.version or 'version unknown'}[/], via {oa_location.resolver})"
             )
             if rescue_reason:
                 console.print(
-                    f"  [yellow]Source was never read[/] ({rescue_reason}) — this whole "
+                    f"  [yellow]Source was never read[/] ({escape(rescue_reason)}) — this whole "
                     "note, title and authors included, is the open-access copy."
                 )
             if not oa_location.is_version_of_record:
@@ -643,7 +645,7 @@ def fetch(
                 )
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
-            console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{note_id}/")
+            console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{escape(note_id)}/")
 
 
 def _url_parse_error(url: str) -> str | None:
@@ -849,7 +851,7 @@ def _download_image(
         # it must be visible, unlike routine 404s and timeouts below. Printed
         # to stderr: this helper has no json_output flag, and stdout must stay
         # pure JSON in --json mode.
-        err_console.print(f"  [yellow]Image refused by fetch gate:[/] {img_url} — {exc}")
+        err_console.print(f"  [yellow]Image refused by fetch gate:[/] {escape(img_url)} — {escape(str(exc))}")
         return None
     except Exception:
         return None

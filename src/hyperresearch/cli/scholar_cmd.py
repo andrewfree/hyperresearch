@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -134,37 +135,41 @@ def scholar_search(
         output(success(data, count=len(results), vault=vault_root), json_mode=True)
         return
 
+    # Every record field comes from an upstream API: print it, never parse it
+    # as Rich markup (a title with "[/mil]" in it raised MarkupError).
     if not results:
-        console.print(f"[dim]No results for[/] '{query}' [dim]across {len(providers)} provider(s).[/]")
+        console.print(
+            f"[dim]No results for[/] '{escape(query)}' [dim]across {len(providers)} provider(s).[/]"
+        )
     for paper in results:
         year = paper.year or "n.d."
-        console.print(f"[bold]{paper.title}[/] [dim]({year})[/]")
+        console.print(f"[bold]{escape(paper.title)}[/] [dim]({year})[/]")
         if paper.authors:
             shown = ", ".join(paper.authors[:4])
             more = f" +{len(paper.authors) - 4}" if len(paper.authors) > 4 else ""
-            console.print(f"  [dim]{shown}{more}[/]")
-        bits = [f"[cyan]{paper.source}[/]"]
+            console.print(f"  [dim]{escape(shown)}{more}[/]")
+        bits = [f"[cyan]{escape(paper.source)}[/]"]
         also = paper.extra.get("also_in")
         if also:
-            bits.append(f"[dim]also in {also}[/]")
+            bits.append(f"[dim]also in {escape(also)}[/]")
         if paper.venue:
-            bits.append(paper.venue)
+            bits.append(escape(paper.venue))
         if paper.citation_count is not None:
             bits.append(f"{paper.citation_count} citations")
         if paper.doi:
-            bits.append(f"doi:{paper.doi}")
+            bits.append(f"doi:{escape(paper.doi)}")
         console.print(f"  {' · '.join(bits)}")
         if paper.pdf_url or paper.url:
-            console.print(f"  [dim]{paper.pdf_url or paper.url}[/]")
+            console.print(f"  [dim]{escape(paper.pdf_url or paper.url)}[/]")
 
     console.print(
         f"\n[dim]{len(results)} shown / {total_merged} merged from "
         f"{len(collected)} records across {len(providers)} provider(s)[/]"
     )
     for failure in failures:
-        console.print(f"[yellow]failed:[/] {failure['source']} — {failure['error']}")
+        console.print(f"[yellow]failed:[/] {failure['source']} — {escape(failure['error'])}")
     for note in notes:
-        console.print(f"[dim]skipped — {note}[/]")
+        console.print(f"[dim]skipped — {escape(note)}[/]")
 
 
 @app.command("sources")

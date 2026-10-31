@@ -74,7 +74,7 @@ def fetch_batch(
         if json_output:
             output(error(str(e), "NO_VAULT"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
         raise typer.Exit(1)
 
     vault.auto_sync()
@@ -85,7 +85,7 @@ def fetch_batch(
     def _fail(url: str, error: str, kind: str) -> None:
         failed_urls.append({"url": url, "error": error, "phase": kind})
         if not json_output:
-            console.print(f"  [red]Failed ({kind}):[/] {url} — {error}")
+            console.print(f"  [red]Failed ({kind}):[/] {escape(url)} — {escape(error)}")
 
     # A URL urlparse rejects would crash the provider, extract_doi and the
     # visible-domain check alike, and take the whole batch down with it.
@@ -118,7 +118,10 @@ def fetch_batch(
         existing = existing_live_note_for_url(conn, url)
         if existing:
             if not json_output:
-                console.print(f"  [dim]Skip:[/] {url} (already fetched as {existing['note_id']})")
+                console.print(
+                    f"  [dim]Skip:[/] {escape(url)} "
+                    f"(already fetched as {escape(existing['note_id'])})"
+                )
         else:
             new_urls.append(url)
 
@@ -164,7 +167,8 @@ def fetch_batch(
                 # beats none.
                 if not json_output:
                     console.print(
-                        f"[red]Batch fetch failed:[/] {e}. Falling back to per-URL fetches."
+                        f"[red]Batch fetch failed:[/] {escape(str(e))}. "
+                        "Falling back to per-URL fetches."
                     )
                 for url in normal_urls:
                     _fetch_one(prov, url, "batch-fallback")
@@ -248,17 +252,19 @@ def fetch_batch(
             if not json_output:
                 if phase == "auth":
                     console.print(
-                        f"  [yellow]Auth required:[/] {burl}: login page detected, skipping. "
+                        f"  [yellow]Auth required:[/] {escape(burl)}: login page detected, skipping. "
                         f"Run 'hyperresearch setup' to create a login profile.{queued}"
                     )
                 else:
-                    console.print(f"  [yellow]Skipped:[/] {burl}: {error_text}.{queued}")
+                    console.print(
+                        f"  [yellow]Skipped:[/] {escape(burl)}: {escape(error_text)}.{queued}"
+                    )
             continue
         pending.append((burl, rescued, loc, reason))
         rescued_urls.add(burl)
         if not json_output:
             console.print(
-                f"  [cyan]Blocked — recovered an open-access copy:[/] {burl} "
+                f"  [cyan]Blocked — recovered an open-access copy:[/] {escape(burl)} "
                 f"(via {loc.resolver})"
             )
 
@@ -343,15 +349,18 @@ def fetch_batch(
         )
 
         if not json_output:
-            console.print(f"  [green]+[/] {title}")
+            # Page titles and URLs print literally, never as Rich markup: a
+            # "[/x]" in one raised MarkupError and aborted the batch before
+            # any sources row was written.
+            console.print(f"  [green]+[/] {escape(title)}")
             if oa_location is not None:
                 console.print(
-                    f"    [cyan]body from:[/] {oa_location.url} "
+                    f"    [cyan]body from:[/] {escape(oa_location.url)} "
                     f"({oa_location.version or 'version unknown'}, via {oa_location.resolver})"
                 )
                 if rescue_reason:
                     console.print(
-                        f"    [yellow]source never read[/] ({rescue_reason}) — "
+                        f"    [yellow]source never read[/] ({escape(rescue_reason)}) — "
                         "title and authors are the open-access copy's too"
                     )
 
@@ -441,7 +450,9 @@ def fetch_batch(
             if raw_file_path:
                 (vault.root / "research" / raw_file_path).unlink(missing_ok=True)
             if not json_output:
-                console.print(f"  [dim]Skip:[/] {url} (already fetched as {winner_id})")
+                console.print(
+                    f"  [dim]Skip:[/] {escape(url)} (already fetched as {escape(winner_id)})"
+                )
         plan = compute_sync_plan(vault)
         if plan.to_delete:
             execute_sync(vault, plan)
