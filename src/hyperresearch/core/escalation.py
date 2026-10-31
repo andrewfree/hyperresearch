@@ -120,26 +120,44 @@ def claim_next(conn, claimed_by: str, vault_tag: str | None = None) -> dict | No
     return dict(row) if row else None
 
 
+def get_item(conn, item_id: int) -> dict | None:
+    """One queue item by id, or None."""
+    row = conn.execute("SELECT * FROM escalations WHERE id = ?", (item_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def resolve(
     conn,
     item_id: int,
     status: str,
     note_id: str | None = None,
     detail: str | None = None,
+    expected_status: str | None = None,
 ) -> dict:
-    """Move an item to a terminal (or needs_human) state."""
+    """Move an item to a terminal (or needs_human) state.
+
+    With ``expected_status`` the item moves only if it is still in that
+    state. The check is part of the one UPDATE, so of two callers racing to
+    resolve the same item exactly one succeeds.
+    """
     if status not in ("fetched", "needs_human", "abandoned", "queued"):
         raise EscalationError(f"invalid resolution '{status}'")
+    guard = " AND status = ?" if expected_status else ""
+    params: list = [status, note_id, detail, _now(), item_id]
+    if expected_status:
+        params.append(expected_status)
     cur = conn.execute(
-        """UPDATE escalations
+        f"""UPDATE escalations
            SET status = ?, note_id = COALESCE(?, note_id),
                detail = COALESCE(?, detail), updated_at = ?
-           WHERE id = ? RETURNING *""",
-        (status, note_id, detail, _now(), item_id),
+           WHERE id = ?{guard} RETURNING *""",
+        params,
     )
     row = cur.fetchone()
     conn.commit()
     if row is None:
+        if expected_status and get_item(conn, item_id) is not None:
+            raise EscalationError(f"escalation item #{item_id} is no longer {expected_status}")
         raise EscalationError(f"no escalation item #{item_id}")
     return dict(row)
 
