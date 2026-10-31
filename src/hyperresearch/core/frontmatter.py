@@ -43,6 +43,22 @@ def parse_frontmatter(content: str) -> tuple[NoteMeta, str]:
     return meta, body
 
 
+class FrontmatterBrokenError(ValueError):
+    """A metadata edit cannot safely parse the original frontmatter."""
+
+
+def parse_frontmatter_for_update(content: str) -> tuple[NoteMeta, str]:
+    """Refuse to serialize the reader fallback metadata over a broken note."""
+    message = "Cannot update note with broken or missing frontmatter."
+    try:
+        meta, body = parse_frontmatter(content)
+    except (yaml.YAMLError, ValueError) as e:
+        raise FrontmatterBrokenError(message) from e
+    if body == content:
+        raise FrontmatterBrokenError(message)
+    return meta, body
+
+
 def serialize_frontmatter(meta: NoteMeta) -> str:
     """Serialize NoteMeta to YAML frontmatter string."""
     data = meta.model_dump(mode="json", exclude_none=True, exclude_defaults=False)
