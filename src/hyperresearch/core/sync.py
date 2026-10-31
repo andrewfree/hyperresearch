@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hyperresearch.core.note import read_note, strip_markdown
+from hyperresearch.core.note import known_note_refs, read_note, strip_markdown
 from hyperresearch.core.patterns import (
     WIKI_LINK_RE,
     is_valid_wiki_link_target,
@@ -203,7 +203,7 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
         # The mtime goes with the read, taken just after it: the move scan
         # reads new files long before their upserts, and an mtime taken at
         # the upsert would hide a write made in between from the next plan.
-        return read_note(file_path, vault.root), file_path.stat().st_mtime
+        return read_note(file_path, vault.root, known_refs=set()), file_path.stat().st_mtime
 
     scanned: dict[Path, tuple] = {}  # changed file -> _read(file), for its upsert
 
@@ -594,6 +594,7 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
             conn.execute("DELETE FROM assets WHERE note_id = ?", (old_id,))
 
         # Resolve links — only for changed notes' outgoing + incoming
+        _refresh_footnote_links(conn, changed_ids)
         _resolve_links_incremental(conn, changed_ids)
 
         # Record sync timestamp
@@ -793,6 +794,37 @@ def _delete_note_from_db(conn, note_id: str) -> None:
     conn.execute("DELETE FROM notes_fts WHERE id = ?", (note_id,))
     conn.execute("DELETE FROM links WHERE source_id = ?", (note_id,))
     conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+
+
+def _refresh_footnote_links(conn, changed_ids: set[str]) -> None:
+    """Revisit ambiguous refs after all ids, titles and aliases are indexed."""
+    if not changed_ids:
+        return
+    known_refs = known_note_refs(conn)
+    # Revisit unchanged sources too: a newly created target can turn a
+    # previously ignored footnote into a real link without editing its source.
+    for row in conn.execute("SELECT note_id, body FROM note_content"):
+        body = row["body"]
+        if "[[" not in body:
+            continue
+        for line_num, line in enumerate(strip_code(body).split("\n"), 1):
+            for match in WIKI_LINK_RE.finditer(line):
+                ref = match.group(1).strip().rstrip("\\")
+                if is_valid_wiki_link_target(ref):
+                    continue
+                if not is_valid_wiki_link_target(ref, allow_footnotes=True):
+                    continue
+                if ref.lower() in known_refs:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO links (source_id, target_ref, line_number, context) "
+                        "VALUES (?, ?, ?, ?)",
+                        (row["note_id"], ref, line_num, line.strip()[:200]),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM links WHERE source_id = ? AND target_ref = ?",
+                        (row["note_id"], ref),
+                    )
 
 
 def _resolve_links_incremental(conn, changed_ids: set[str]) -> None:
