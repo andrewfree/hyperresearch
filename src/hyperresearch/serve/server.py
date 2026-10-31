@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import socket
 import sqlite3
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hyperresearch.serve.renderer import render_markdown
+
+# BSD-derived stacks (macOS included) let a SO_REUSEADDR bind to a specific
+# address succeed beside another socket's wildcard bind on the same port.
+_REUSEADDR_BINDS_BESIDE_WILDCARD = sys.platform == "darwin" or "bsd" in sys.platform
 
 # -- Vintage cream & dark brown theme --
 CSS = """
@@ -589,7 +594,12 @@ class HyperresearchServer(ThreadingHTTPServer):
 
     HTTPServer sets ``allow_reuse_address`` (SO_REUSEADDR) so a restarted
     server can reclaim a port whose previous owner is still in TIME_WAIT.
-    That is all the option does on POSIX. Winsock gives SO_REUSEADDR a
+    On Linux a bind with the option still fails while another socket
+    listens on an overlapping address. BSD-derived stacks, macOS included,
+    also let it bind 127.0.0.1 beside another process's wildcard
+    (0.0.0.0) listener on the same port, and the more specific bind then
+    receives that process's 127.0.0.1 connections; ``server_bind`` refuses
+    such a port. Winsock gives SO_REUSEADDR a
     different meaning: the bind is allowed to succeed on a port another
     socket is actively listening on, so the port is shared rather than
     reclaimed, and neither listener is guaranteed the connections. With
@@ -600,6 +610,20 @@ class HyperresearchServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        port = self.server_address[1]
+        if _REUSEADDR_BINDS_BESIDE_WILDCARD and port and self.address_family == socket.AF_INET:
+            # A SO_REUSEADDR bind to the wildcard itself still passes over
+            # TIME_WAIT but fails while a socket holds 0.0.0.0 on this port,
+            # including a dual-stack "::" listener. Those are the listeners
+            # that answer 127.0.0.1. An IPv6-only listener never sees that
+            # traffic, so it is not probed. A port=0 bind never lands on a
+            # held port, so it needs no probe.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("0.0.0.0", port))
+        super().server_bind()
 
 
 def run_server(vault, port: int = 8080, open_browser: bool = False) -> int:
