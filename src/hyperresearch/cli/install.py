@@ -291,7 +291,9 @@ def install(
     if is_new and is_interactive and targets == ["claude"]:
         from hyperresearch.cli.setup import setup
 
-        setup(path=path, json_output=False)
+        # Called as a plain function, so every option is passed: an omitted
+        # one would arrive as typer's OptionInfo default, not None.
+        setup(path=path, json_output=False, name=name, gear=profile)
         return
 
     # Step 1: Init vault (skip if already exists)
