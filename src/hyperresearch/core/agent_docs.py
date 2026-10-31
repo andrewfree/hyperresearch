@@ -380,7 +380,10 @@ def _render_blurb(platforms: list[str], hpr_path: str) -> str:
 def _inject_into_file(filepath: Path, blurb: str, filename: str) -> str | None:
     """Inject the hyperresearch blurb into a single file. Returns action taken or None."""
     if filepath.exists():
-        content = filepath.read_text(encoding="utf-8-sig")
+        try:
+            content = filepath.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            return f"{filename} (skipped: not UTF-8 text; file left unchanged)"
 
         if HYPERRESEARCH_SECTION_MARKER in content:
             pattern = re.compile(
