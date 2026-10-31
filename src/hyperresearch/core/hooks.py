@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -3823,6 +3825,26 @@ def _load_hook_config(path: Path) -> tuple[dict, str | None]:
     return loaded, None
 
 
+# Every PreToolUse command an install has registered runs this script; it is
+# how our entry is told apart from the user's own hooks.
+_HOOK_SCRIPT = ".hyperresearch/hook.js"
+
+
+def _hook_command(hook_path: Path) -> str:
+    """The shell command that runs hook.js with its path as one argument.
+
+    Claude Code runs the command through a shell. Double quotes keep a path
+    with spaces together, and are what earlier installs wrote, but the shell
+    still expands `$`, backticks and backslashes inside them, so a path with
+    one of those is single-quoted instead. Windows keeps double quotes: its
+    paths cannot hold `"`, and cmd does not treat single quotes as quoting.
+    """
+    path = hook_path.as_posix()
+    if sys.platform != "win32" and any(ch in path for ch in '$`\\"'):
+        return f"node {shlex.quote(path)}"
+    return f'node "{path}"'
+
+
 def _install_claude_hook(vault_root: Path, hpr_path: str) -> str | None:
     """Install PreToolUse hook into .claude/settings.json."""
     settings_dir = vault_root / ".claude"
@@ -3837,14 +3859,28 @@ def _install_claude_hook(vault_root: Path, hpr_path: str) -> str | None:
     hook_path = _write_hook_script(vault_root, hpr_path)
     settings_dir.mkdir(exist_ok=True)
 
+    command = _hook_command(hook_path)
     hooks = settings.setdefault("hooks", {})
     pre_tool = hooks.setdefault("PreToolUse", [])
 
-    for entry in pre_tool:
-        if isinstance(entry, dict):
-            for h in entry.get("hooks", []):
-                if "hyperresearch" in h.get("command", ""):
-                    return None
+    # The registered path is absolute, so after the project moves (or a
+    # teammate clones a committed settings.json) our entry points at a
+    # hook.js that is not there. Rewrite it in place rather than keep it.
+    ours = [
+        h
+        for entry in pre_tool
+        if isinstance(entry, dict)
+        for h in entry.get("hooks", [])
+        if isinstance(h, dict) and _HOOK_SCRIPT in str(h.get("command", ""))
+    ]
+    if ours:
+        stale = [h for h in ours if h.get("command") != command]
+        if not stale:
+            return None
+        for h in stale:
+            h["command"] = command
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        return "Claude Code: .claude/settings.json (PreToolUse hook path updated)"
 
     # Web tools only. The reminder is "check the vault before you search the
     # web"; on Glob and Grep it is noise, and now that the payload actually
@@ -3854,7 +3890,7 @@ def _install_claude_hook(vault_root: Path, hpr_path: str) -> str | None:
         "matcher": "WebSearch|WebFetch",
         "hooks": [{
             "type": "command",
-            "command": f'node "{hook_path.as_posix()}"',
+            "command": command,
         }],
     })
 
