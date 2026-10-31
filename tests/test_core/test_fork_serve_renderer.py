@@ -113,3 +113,31 @@ def test_brackets_in_a_url_survive_as_character_references():
 
     assert '<a href="http://&#91;::1&#93;:8080/x?a&#91;&#93;=1">local</a>' in out
     assert html.unescape("http://&#91;::1&#93;:8080/x?a&#91;&#93;=1") == "http://[::1]:8080/x?a[]=1"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("![diagram](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="diagram">'),
+        ("![](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="">'),
+        ('![a "b" & c](d.png)', '<img src="d.png" alt="a &quot;b&quot; &amp; c">'),
+        (
+            "[![badge](https://example.com/b.svg)](https://example.com)",
+            '<a href="https://example.com"><img src="https://example.com/b.svg" alt="badge"></a>',
+        ),
+    ],
+    ids=["image", "empty-alt", "alt-escaped", "linked-image"],
+)
+def test_images_render_as_img(body, expected):
+    out = render_markdown(body)
+
+    assert expected in out
+    assert "!<a" not in out
+
+
+def test_image_with_a_script_url_keeps_only_its_alt_text():
+    out = render_markdown("![pic](javascript:alert(1))")
+
+    assert "<img" not in out
+    assert "javascript:" not in out
+    assert "pic" in out
