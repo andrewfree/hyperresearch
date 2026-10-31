@@ -489,8 +489,9 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             return
 
         tags = [r["tag"] for r in self.db.execute("SELECT tag FROM tags WHERE note_id = ?", (note_id,))]
+        # links holds a row per ref per line; the panel shows one entry per note.
         backlinks = self.db.execute(
-            "SELECT l.source_id, n.title FROM links l "
+            "SELECT DISTINCT l.source_id, n.title FROM links l "
             "JOIN notes n ON l.source_id = n.id WHERE l.target_id = ? ORDER BY n.title",
             (note_id,),
         ).fetchall()
