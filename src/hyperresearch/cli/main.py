@@ -21,12 +21,13 @@ def init(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Initialize a new hyperresearch vault (Claude Code integration)."""
-    from hyperresearch.core.vault import Vault, VaultError
+    from hyperresearch.core.vault import VAULT_INTERNAL_DIRS, Vault, VaultError
 
     root = Path(path).resolve()
     kb_dir = (root / research_dir).resolve()
-    if kb_dir == root or not kb_dir.is_relative_to(root):
-        msg = "Research directory must be a subdirectory inside the vault root"
+    internal = any(kb_dir.is_relative_to((root / name).resolve()) for name in VAULT_INTERNAL_DIRS)
+    if kb_dir == root or not kb_dir.is_relative_to(root) or internal:
+        msg = "Research directory must be a subdirectory inside the vault root, outside vault internals"
         if json_output:
             output(error(msg, "INVALID_RESEARCH_DIR"), json_mode=True)
         else:
