@@ -4,6 +4,20 @@ from __future__ import annotations
 
 import html
 import re
+import urllib.parse
+from collections.abc import Mapping
+
+
+def path_href(prefix: str, segment: str) -> str:
+    """``prefix`` plus ``segment`` percent-encoded as one path segment.
+
+    The server unquotes the path, so this round-trips any id or tag. Without
+    it a '#' or '?' in a tag cut the browser's request short and a literal
+    '%20' was decoded to a space. quote() leaves nothing HTML-special, so the
+    result is safe in an attribute as is.
+    """
+    return prefix + urllib.parse.quote(segment, safe="")
+
 
 # Schemes a note body is allowed to link out to. Note bodies are fetched page
 # content, so a URL in one is attacker-influenced: `javascript:` and `data:`
@@ -30,17 +44,38 @@ def _is_safe_url(url: str) -> bool:
     return m.group(1).lower() in SAFE_URL_SCHEMES
 
 
+def _attr_url(url: str) -> str:
+    """`url` for an href or src attribute, its brackets as character references.
+
+    The image, link and wiki-link patterns run after this over the same text.
+    Markup one of them rendered inside the attribute would end it at its first
+    quote and turn the note text after it into attributes (an onerror=...).
+    None of them can match without '['; the browser decodes the references.
+    """
+    return url.replace("[", "&#91;").replace("]", "&#93;")
+
+
 def _link(url: str, text: str) -> str:
     if not _is_safe_url(url):
         return text  # keep the label, drop the link
-    return f'<a href="{url}">{text}</a>'
+    return f'<a href="{_attr_url(url)}">{text}</a>'
 
 
 def _image(url: str, alt: str) -> str:
     if not _is_safe_url(url):
         return alt
-    return f'<img src="{url}" alt="{alt}">'
+    return f'<img src="{_attr_url(url)}" alt="{alt}">'
 
+
+# Bodies are fetched pages, and re.sub holds the GIL, so one quadratic scan
+# stalls every viewer thread. No bracket pattern may rescan text that the
+# next candidate scans again: link text stops at the next '[' and a URL at
+# the next '(' or ')', so each byte is scanned a bounded number of times.
+# A URL may still hold balanced (...) pairs, as Wikipedia URLs do. It never
+# holds a raw '"': the body was escaped, so one is an image rendered just
+# before ('[a](x![b](c))'), and its quotes would end the href.
+_LINK_TEXT = r"[^\[\]]"
+_LINK_URL = r'((?:[^()"]|\([^()"]*\))+)'
 
 # Simple markdown patterns
 MD_PATTERNS = [
@@ -57,19 +92,28 @@ MD_PATTERNS = [
     (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
     # Code
     (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+    # Images, before links: the link pattern also matches the "[alt](url)"
+    # inside "![alt](url)" and would leave "!<a ...>" behind.
+    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
     # Links
-    (re.compile(r"\[([^\]]+)\]\(([^)]+)\)"), lambda m: _link(m.group(2), m.group(1))),
-    # Images
-    (re.compile(r"!\[([^\]]*)\]\(([^)]+)\)"), lambda m: _image(m.group(2), m.group(1))),
+    (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
     # Horizontal rule
     (re.compile(r"^---+$", re.MULTILINE), r"<hr>"),
-    # Blockquotes
-    (re.compile(r"^>\s*(.+)$", re.MULTILINE), r"<blockquote>\1</blockquote>"),
+    # Blockquotes. The body is escaped before these patterns run, so the
+    # marker is '&gt;' by now; [ \t] rather than \s keeps a bare '>' line from
+    # pulling the next line into its quote.
+    (re.compile(r"^&gt;[ \t]*(.*)$", re.MULTILINE), r"<blockquote>\1</blockquote>"),
 ]
 
 
-def render_markdown(body: str) -> str:
-    """Convert markdown body to HTML, resolving [[wiki-links]]."""
+def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str:
+    """Convert markdown body to HTML, resolving [[wiki-links]].
+
+    ``resolved`` maps a link's ref, as sync stored it in the links table, to
+    the note id sync resolved it to (by id, title, alias or case). A ref not
+    in it links to its own text.
+    """
+    resolved = resolved or {}
     # Escape HTML first
     text = html.escape(body)
 
@@ -96,9 +140,14 @@ def render_markdown(body: str) -> str:
             target = display = inner
         target = target.strip()
         display = display.strip()
-        return f'<a href="/note/{target}" class="wiki-link">{display}</a>'
+        # Look the ref up the way sync stored it: unescaped, trailing '\' dropped.
+        ref = html.unescape(target).rstrip("\\")
+        return f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
 
-    text = re.sub(r"\[\[([^\]]+)\]\]", replace_wiki_link, text)
+    # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
+    # The body was escaped, so a raw '"' here is a link rendered above
+    # ('[[t [a](x) u]]'); taken as a target it would end the href attribute.
+    text = re.sub(r'\[\[([^\[\]\n"]+)\]\]', replace_wiki_link, text)
 
     # Lists (simple)
     text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
@@ -125,13 +174,13 @@ def render_markdown(body: str) -> str:
         result_lines.append(_render_table(table_lines))
     text = "\n".join(result_lines)
 
-    # Restore code blocks
+    # Restore code blocks. They were saved from the already-escaped body, so
+    # escaping them again showed '&lt;' and '&amp;' as literal text.
     for i, block in enumerate(code_blocks):
-        html.escape(block)
         lang_match = re.match(r"```(\w+)\n", block)
         lang = lang_match.group(1) if lang_match else ""
         code_content = re.sub(r"```\w*\n|```", "", block)
-        code_html = f'<pre><code class="language-{lang}">{html.escape(code_content)}</code></pre>'
+        code_html = f'<pre><code class="language-{lang}">{code_content}</code></pre>'
         text = text.replace(f"\x00CODE{i}\x00", code_html)
 
     # Paragraphs: wrap standalone lines
