@@ -39,7 +39,7 @@ def known_note_refs(conn) -> set[str]:
     )}
 
 
-def read_note(file_path: Path, vault_root: Path, *, known_refs: set[str] | None = None) -> Note:
+def read_note(file_path: Path, vault_root: Path) -> Note:
     """Read a markdown file and parse into a Note."""
     raw_bytes = file_path.read_bytes()
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
@@ -60,20 +60,24 @@ def read_note(file_path: Path, vault_root: Path, *, known_refs: set[str] | None 
     # Extract outgoing wiki links, filtering citation footnotes and URLs
     cleaned = strip_code(body)
     raw_links = [m.group(1).strip().rstrip("\\") for m in WIKI_LINK_RE.finditer(cleaned)]
-    if known_refs is None and any(not is_valid_wiki_link_target(ref) for ref in raw_links):
+    known_refs: set[str] = set()
+    if any(not is_valid_wiki_link_target(ref) for ref in raw_links):
         from hyperresearch.core.vault import Vault
 
         db_path = Vault(vault_root).db_path
-        known_refs = set()
         if db_path.is_file():
-            conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
+            conn = None
             try:
+                conn = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
                 known_refs = known_note_refs(conn)
+            except sqlite3.Error:
+                pass  # Markdown remains readable when the derived cache is unusable.
             finally:
-                conn.close()
+                if conn is not None:
+                    conn.close()
     outgoing = list(dict.fromkeys(
         ref for ref in raw_links if is_valid_wiki_link_target(
-            ref, allow_footnotes=ref.lower() in (known_refs or ()),
+            ref, allow_footnotes=ref.lower() in known_refs,
         )
     ))
 
