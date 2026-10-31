@@ -3806,7 +3806,8 @@ def _load_hook_config(path: Path) -> tuple[dict, str | None]:
     when the file exists but is not a JSON object we can read. Such a file
     still holds the user's settings (JSONC comments and trailing commas are
     common in hand-edited ones), so the caller must leave it alone: writing
-    `{}` plus our hook over it would destroy them.
+    `{}` plus our hook over it would destroy them. The same goes for a
+    `hooks` value that is not the shape we merge into.
     """
     if not path.exists():
         return {}, None
@@ -3822,7 +3823,30 @@ def _load_hook_config(path: Path) -> tuple[dict, str | None]:
         return {}, f"is not valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg})"
     if not isinstance(loaded, dict):
         return {}, "is not a JSON object"
+    problem = _hooks_shape_problem(loaded)
+    if problem:
+        return {}, problem
     return loaded, None
+
+
+def _hooks_shape_problem(settings: dict) -> str | None:
+    """Why `settings["hooks"]` is not the shape a hook merges into, or None.
+
+    Claude Code and Codex both use `{event: [{"matcher"?, "hooks": [...]}]}`.
+    Merging into anything else crashed after hook.js was written (a list has
+    no setdefault, a dict no append), or for Codex replaced the user's value.
+    """
+    if "hooks" not in settings:
+        return None
+    hooks = settings["hooks"]
+    if not isinstance(hooks, dict):
+        return 'has a "hooks" value that is not a JSON object'
+    for event, entries in hooks.items():
+        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+            return f'has a "hooks.{event}" value that is not a list of objects'
+        if not all(isinstance(e.get("hooks", []), list) for e in entries):
+            return f'has a "hooks.{event}" entry whose "hooks" is not a list'
+    return None
 
 
 # Every PreToolUse command an install has registered runs this script; it is
