@@ -48,9 +48,7 @@ def citecheck_extract(
         raise typer.Exit(1)
 
     vault.auto_sync()
-    report_path = Path(report) if report else (
-        vault.root / "research" / "notes" / f"final_report_{vault_tag}.md"
-    )
+    report_path = Path(report) if report else vault.final_report_path(vault_tag)
     if not report_path.exists():
         msg = f"report not found: {report_path}"
         if json_output:

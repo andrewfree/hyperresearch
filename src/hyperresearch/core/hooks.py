@@ -40,7 +40,10 @@ def _set_render_state(
     global _RENDER_STATE
     from hyperresearch.core.render import build_render_context
 
+    from hyperresearch.core.config import VaultConfig
+
     _RENDER_STATE = {
+        "research_dir": VaultConfig.load(config_path).research_dir if config_path else "research",
         "profile_name": profile_name,
         "platform": platform,
         "context": build_render_context(config_path, primary=profile_name, platform=platform),
@@ -68,6 +71,7 @@ def _render_installed(
 
     state = _get_render_state()
     rendered = render_prompt(content, state["context"])
+    rendered = rendered.replace("research/", state["research_dir"].rstrip("/") + "/")
     rendered = rendered.replace("{hpr_path}", hpr_path.replace("\\", "/"))
     if not header:
         return rendered

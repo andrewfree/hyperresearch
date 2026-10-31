@@ -115,6 +115,9 @@ class Vault:
     def run_dir(self, vault_tag: str) -> Path:
         return self.runs_dir / validate_run_tag(vault_tag)
 
+    def final_report_path(self, vault_tag: str) -> Path:
+        return self.notes_dir / f"final_report_{validate_run_tag(vault_tag)}.md"
+
     @property
     def templates_dir(self) -> Path:
         """Templates live inside .hyperresearch/ (hidden)."""
