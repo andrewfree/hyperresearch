@@ -164,7 +164,10 @@ def manifest_lock(vault, vault_tag: str) -> Iterator[None]:
     except OSError as e:
         raise RunError(f"cannot lock run '{vault_tag}': {e}") from e
     try:
-        _lock_file(fd)
+        try:
+            _lock_file(fd)
+        except OSError as e:
+            raise RunError(f"cannot lock run '{vault_tag}': {e}") from e
         held[key] = 1
         try:
             yield
