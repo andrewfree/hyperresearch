@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import math
+
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer()
 
@@ -75,6 +78,22 @@ def config_set(
     # Type coercion
     if attr in ("auto_sync", "auto_build_index", "web_magic"):
         value = value.lower() in ("true", "1", "yes")
+    elif attr in ("search_boost_evergreen", "search_penalize_deprecated"):
+        # Stored raw, a word here was written to config.toml unquoted and
+        # every later command failed to load it. NaN and infinity parse as
+        # floats but would wreck the ranking they scale.
+        try:
+            number = float(value)
+        except ValueError:
+            number = math.nan
+        if not math.isfinite(number):
+            msg = f"{key} must be a number, got {value!r}. Nothing was changed."
+            if json_output:
+                output(error(msg, "INVALID_VALUE", vault=str(vault.root)), json_mode=True)
+            else:
+                console.print(f"[red]Error:[/] {escape(msg)}")
+            raise typer.Exit(1)
+        value = number
 
     setattr(config, attr, value)
     config.save(vault.config_path)
@@ -128,12 +147,17 @@ def config_agent_docs(
     """Update CLAUDE.md (and AGENTS.md on Codex installs) with the latest hyperresearch blurb."""
     from hyperresearch.core.agent_docs import inject_agent_docs
     from hyperresearch.core.hooks import installed_platforms
+    from hyperresearch.core.platforms import paths_for
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
-    modified = inject_agent_docs(vault.root)
-    if "codex" in installed_platforms(vault.root):
-        modified += inject_agent_docs(vault.root, platform="codex")
+    # Only the runtimes the project was installed for: a Codex-only project
+    # must not gain a CLAUDE.md. Neither installed means Claude Code, the
+    # default target.
+    platforms = installed_platforms(vault.root) or ["claude"]
+    modified: list[str] = []
+    for platform in platforms:
+        modified += inject_agent_docs(vault.root, platform=platform)
 
     if json_output:
         output(success({"modified": modified}, vault=str(vault.root)), json_mode=True)
@@ -142,4 +166,5 @@ def config_agent_docs(
             for m in modified:
                 console.print(f"  [green]{m}[/]")
         else:
-            console.print("[dim]CLAUDE.md already up to date.[/]")
+            docs = " and ".join(paths_for(p).docs_file for p in platforms)
+            console.print(f"[dim]{docs} already up to date.[/]")

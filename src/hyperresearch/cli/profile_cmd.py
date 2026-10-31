@@ -149,20 +149,28 @@ def profile_use(
     vault.config.save(vault.config_path)
 
     from hyperresearch.core.agent_docs import _resolve_executable
-    from hyperresearch.core.hooks import install_hooks, installed_platforms
+    from hyperresearch.core.hooks import HookRefusal, install_hooks, installed_platforms
 
     hpr_path = _resolve_executable()
-    actions = install_hooks(vault.root, hpr_path=hpr_path, profile=name)
-    # A project also installed for Codex gets its Codex files re-rendered too.
-    if "codex" in installed_platforms(vault.root):
-        actions += install_hooks(vault.root, hpr_path=hpr_path, profile=name, platform="codex")
+    # Re-render every runtime the project was installed for, and only those:
+    # a Codex-only project must not gain a .claude/ install. A vault with
+    # neither installed gets Claude Code, the default target.
+    actions: list[str] = []
+    for platform in installed_platforms(vault.root) or ["claude"]:
+        actions += install_hooks(vault.root, hpr_path=hpr_path, profile=name, platform=platform)
+    # A hook the installer refused (an unparseable .claude/settings.json, a
+    # read-only .codex/) is a note about a file it did not write, not a
+    # rendered file.
+    refused = [a for a in actions if isinstance(a, HookRefusal)]
+    rendered = [a for a in actions if not isinstance(a, HookRefusal)]
 
     data = {
         "gear": name,
         "description": profile.description,
         "sources": list(profile.source_target),
         "time_estimate": profile.time_estimate,
-        "rerendered": actions,
+        "rerendered": rendered,
+        "refused": refused,
     }
     if json_output:
         output(success(data, vault=str(vault.root)), json_mode=True)
@@ -175,13 +183,9 @@ def profile_use(
         f"  [dim]sources {profile.source_target[0]}-{profile.source_target[1]}"
         f"  {profile.time_estimate}[/]"
     )
-    # A hook the installer refused (an unparseable .claude/settings.json, a
-    # read-only .codex/) comes back as a "NOT installed" note, not a rendered
-    # file, and a bare count would hide it.
-    refused = [a for a in actions if "NOT installed" in a]
-    rendered = len(actions) - len(refused)
+    # A bare count would hide a refusal, so each one is printed.
     if rendered:
-        console.print(f"  re-rendered {rendered} skill/agent file(s)")
+        console.print(f"  re-rendered {len(rendered)} skill/agent file(s)")
     else:
         console.print("  [dim]all installed prompts already at this gear[/]")
     for note in refused:
