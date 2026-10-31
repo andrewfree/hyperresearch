@@ -4,6 +4,19 @@ from __future__ import annotations
 
 import html
 import re
+import urllib.parse
+
+
+def path_href(prefix: str, segment: str) -> str:
+    """``prefix`` plus ``segment`` percent-encoded as one path segment.
+
+    The server unquotes the path, so this round-trips any id or tag. Without
+    it a '#' or '?' in a tag cut the browser's request short and a literal
+    '%20' was decoded to a space. quote() leaves nothing HTML-special, so the
+    result is safe in an attribute as is.
+    """
+    return prefix + urllib.parse.quote(segment, safe="")
+
 
 # Schemes a note body is allowed to link out to. Note bodies are fetched page
 # content, so a URL in one is attacker-influenced: `javascript:` and `data:`

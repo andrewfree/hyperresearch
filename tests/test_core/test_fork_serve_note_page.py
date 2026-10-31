@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import html
+import re
+import urllib.parse
 from http.client import HTTPConnection
 from threading import Thread
 
@@ -101,3 +104,41 @@ def test_shown_title_is_escaped(tmp_vault, viewer):
 
     assert status == 200
     assert "<h1>Fish &amp; &lt;Chips&gt;</h1>" in _main(page)
+
+
+def _browser_request_target(href_attr: str) -> str:
+    """What a browser requests for an href: the fragment is dropped, '?' starts
+    the query, and only spaces and non-ASCII get percent-encoded."""
+    parts = urllib.parse.urlsplit(html.unescape(href_attr))
+    target = urllib.parse.quote(parts.path, safe="/%")
+    return f"{target}?{parts.query}" if parts.query else target
+
+
+@pytest.mark.parametrize("tag", ["c#", "what?", "a%20b", "a/b", "x y", "naïve"])
+@pytest.mark.parametrize("linking_page", ["/note/tagged", "/tags"])
+def test_tag_link_opens_that_tags_page(tmp_vault, viewer, tag, linking_page):
+    write_note(tmp_vault.notes_dir, "Tagged", body="x", tags=[tag])
+    _sync(tmp_vault)
+
+    _, page = _get(viewer, linking_page)
+    hrefs = re.findall(r'href="(/tag/[^"]*)"', page)
+    assert len(hrefs) == 1
+    status, tag_page = _get(viewer, _browser_request_target(hrefs[0]))
+
+    assert status == 200
+    assert f"<h1>Tag: {html.escape(tag)}</h1>" in tag_page
+    assert "<p>1 notes</p>" in tag_page
+
+
+def test_note_links_still_open_their_notes(tmp_vault, viewer):
+    write_note(tmp_vault.notes_dir, "Café Notes", body="accented id\n")
+    write_note(tmp_vault.notes_dir, "Plain", body="See [[café-notes]].\n")
+    _sync(tmp_vault)
+
+    _, index = _get(viewer, "/")
+    hrefs = re.findall(r'href="(/note/[^"]*)"', _main(index))
+    assert len(hrefs) == 2
+    for href in hrefs:
+        status, page = _get(viewer, _browser_request_target(href))
+        assert status == 200
+        assert re.search(r"<title>(Café Notes|Plain) \|", page)
