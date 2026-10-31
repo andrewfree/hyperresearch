@@ -74,8 +74,8 @@ def _image(url: str, alt: str) -> str:
 # A URL may still hold balanced (...) pairs, as Wikipedia URLs do. It never
 # holds a raw '"': the body was escaped, so one is an image rendered just
 # before ('[a](x![b](c))'), and its quotes would end the href.
-_LINK_TEXT = r"[^\[\]]"
-_LINK_URL = r'((?:[^()"]|\([^()"]*\))+)'
+_LINK_TEXT = r"[^\[\]\x00]"
+_LINK_URL = r'((?:[^()"\x00]|\([^()"\x00]*\))+)'
 
 # Simple markdown patterns
 MD_PATTERNS = [
@@ -125,11 +125,8 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
 
     text = re.sub(r"```(\w*)\n(.*?)```", save_code_block, text, flags=re.DOTALL)
 
-    # Apply markdown patterns
-    for pattern, replacement in MD_PATTERNS:
-        text = pattern.sub(replacement, text)
-
     # Wiki links: [[target|display]] or [[target]]
+    wiki_links = []
     def replace_wiki_link(m):
         full = m.group(0)
         # Unescape the brackets that html.escape would have converted
@@ -142,12 +139,18 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
         display = display.strip()
         # Look the ref up the way sync stored it: unescaped, trailing '\' dropped.
         ref = html.unescape(target).rstrip("\\")
-        return f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
+        wiki_links.append(
+            f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
+        )
+        return f"\x00WIKI{len(wiki_links) - 1}\x00"
 
     # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
-    # The body was escaped, so a raw '"' here is a link rendered above
-    # ('[[t [a](x) u]]'); taken as a target it would end the href attribute.
     text = re.sub(r'\[\[([^\[\]\n"]+)\]\]', replace_wiki_link, text)
+
+    # Keep formatting out of refs and labels. Link/image patterns exclude the
+    # placeholder delimiter so restoration cannot put markup in an attribute.
+    for pattern, replacement in MD_PATTERNS:
+        text = pattern.sub(replacement, text)
 
     # Lists (simple)
     text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
@@ -173,6 +176,9 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
     if in_table:
         result_lines.append(_render_table(table_lines))
     text = "\n".join(result_lines)
+
+    for i, link in enumerate(wiki_links):
+        text = text.replace(f"\x00WIKI{i}\x00", link)
 
     # Restore code blocks. They were saved from the already-escaped body, so
     # escaping them again showed '&lt;' and '&amp;' as literal text.
