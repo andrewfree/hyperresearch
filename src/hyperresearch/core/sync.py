@@ -179,19 +179,25 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
     deleted_paths = set(plan.to_delete)
     id_to_path: dict[str, str] = {}
     path_to_id: dict[str, str] = {}
-    gone: dict[str, str] = {}  # id -> content hash, for rows whose file is gone
+    indexed_hash: dict[str, str] = {}  # id -> content hash, for rows whose file is there
+    # id -> content hash, for rows whose file no longer declares their id:
+    # the file is gone, or (found below) it now declares another id.
+    released: dict[str, str] = {}
     for row in conn.execute("SELECT id, path, content_hash FROM notes"):
         if row["path"] in deleted_paths:
-            gone[row["id"]] = row["content_hash"]
+            released[row["id"]] = row["content_hash"]
             continue
         id_to_path[row["id"]] = row["path"]
         path_to_id[row["path"]] = row["id"]
+        indexed_hash[row["id"]] = row["content_hash"]
     # Every new file by stem: a stem can be new in more than one directory
     # (research/notes/ and research/temp/).
     new_files_by_stem: dict[str, list[Path]] = {}
     for p in plan.to_add:
         new_files_by_stem.setdefault(p.stem, []).append(p)
     renamed_from: set[str] = set()
+    to_add = list(plan.to_add)
+    to_update = list(plan.to_update)
 
     def _read(file_path: Path) -> tuple:
         # The mtime goes with the read, taken just after it: the move scan
@@ -199,25 +205,83 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
         # the upsert would hide a write made in between from the next plan.
         return read_note(file_path, vault.root), file_path.stat().st_mtime
 
-    # A moved file (note mv, or a plain mv) is its old path deleted and a new
-    # file with the same id and the same bytes. That file takes the row in
-    # place, so the rows only the DB holds stay with it; a delete and re-add
-    # cascaded its claims, embeddings and assets away and set its sources row
-    # to NULL. The id alone is not enough: a file that was never indexed and
-    # declares it (a refused collision copy, an import) would take a removed
-    # note's rows. A move with an edit in the same pass is a delete and an
-    # add. Byte-identical claimants go by path, so every platform picks the
-    # same one, and the others collide with it.
-    scanned: dict[Path, tuple] = {}  # new file -> _read(file), for its upsert
-    moves: dict[str, Path] = {}  # gone id -> the new file that takes its row
-    for p in sorted(plan.to_add, key=Path.as_posix) if gone else ():
+    scanned: dict[Path, tuple] = {}  # changed file -> _read(file), for its upsert
+
+    def _scan_edit(file_path: Path) -> None:
+        """Read an indexed file whose bytes changed; one that now declares
+        another id releases the id its row holds."""
+        old_id = path_to_id.get(file_path.relative_to(vault.root).as_posix())
         try:
-            scanned[p] = _read(p)
+            # `sync --force` lists unchanged files too: their id is the row's.
+            if hashlib.sha256(file_path.read_bytes()).hexdigest() == indexed_hash.get(old_id):
+                return
+            scanned[file_path] = _read(file_path)
         except Exception:
-            continue  # the add loop reads it again and reports the error
+            return  # its upsert reads it again and reports the error
+        note = scanned[file_path][0]
+        if old_id is not None and note.id_declared and note.meta.id != old_id:
+            released[old_id] = indexed_hash[old_id]
+
+    for p in to_update:
+        _scan_edit(p)
+    if released:
+        for p in sorted(to_add, key=Path.as_posix):
+            try:
+                scanned[p] = _read(p)
+            except Exception:
+                continue  # the add loop reads it again and reports the error
+        # A rename keeps a file's mtime, so the plan can pass over a path a
+        # rotation filled with another note (`mv b.md c.md; mv a.md b.md`
+        # with both written in the same instant). When a changed file claims
+        # an id whose row sits at such a path, the file there is checked:
+        # if its bytes moved on, it is an edit of this pass too.
+        planned = {p.relative_to(vault.root).as_posix() for p in (*to_add, *to_update)}
+        planned |= deleted_paths
+        unchecked = list(scanned)
+        while unchecked:
+            claimed = scanned[unchecked.pop()][0].meta.id
+            owner = id_to_path.get(claimed)
+            if owner is None or owner in planned:
+                continue
+            planned.add(owner)
+            owner_path = vault.root / owner
+            try:
+                current_hash = hashlib.sha256(owner_path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            if current_hash != indexed_hash[claimed]:
+                to_update.append(owner_path)
+                result.unchanged -= 1
+                _scan_edit(owner_path)
+                if owner_path in scanned:
+                    unchecked.append(owner_path)
+
+    # A moved file (note mv, a plain mv, a rotation of files) declares a
+    # released id with the bytes its row was indexed from. That file takes
+    # the row in place, so the rows only the DB holds stay with it; a delete
+    # and re-add cascaded its claims, embeddings and assets away and set its
+    # sources row to NULL, and a rename in place at the old path gave them
+    # to whatever new file took that path. The id alone is not enough: a
+    # file that was never indexed and declares it (a refused collision copy,
+    # an import) would take a removed note's rows. A move with an edit in
+    # the same pass is a delete and an add. Byte-identical claimants go by
+    # path, so every platform picks the same one, and the others collide
+    # with it. A file whose own row keeps its id cannot take another.
+    moves: dict[str, Path] = {}  # released id -> the changed file that takes its row
+    for p in sorted(scanned, key=Path.as_posix):
         note = scanned[p][0]
-        if gone.get(note.meta.id) == note.content_hash and note.meta.id not in moves:
+        own_id = path_to_id.get(p.relative_to(vault.root).as_posix())
+        if own_id is not None and own_id not in released:
+            continue
+        if released.get(note.meta.id) == note.content_hash and note.meta.id not in moves:
             moves[note.meta.id] = p
+    # A row whose file now holds a moved note, and that did not move itself,
+    # has no file left: it goes as a removed note's row does.
+    displaced = [
+        path_to_id[rel]
+        for rel in (p.relative_to(vault.root).as_posix() for p in moves.values())
+        if rel in path_to_id and path_to_id[rel] not in moves
+    ]
 
     def _new_files_claiming(note_id: str) -> list:
         """The new files named after `note_id` whose id is `note_id`.
@@ -346,19 +410,52 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
         # old path then finds no row there, and an id edit that claims its id
         # collides with it. The file syncs as an edit of that row, so a
         # failed upsert leaves the row, with its children, at the new path.
-        to_add = list(plan.to_add)
-        to_update = list(plan.to_update)
+        # Every moved row steps off its path before any takes its new one,
+        # as a rotation moves a row onto a path another row is leaving.
+        if moves:
+            conn.execute("SAVEPOINT sync_moves")
+            at = ""
+            try:
+                for note_id, file_path in moves.items():
+                    at = file_path.relative_to(vault.root).as_posix()
+                    conn.execute(
+                        "UPDATE notes SET path = ? WHERE id = ?", (f":moving:{note_id}", note_id)
+                    )
+                for note_id in displaced:
+                    at = id_to_path[note_id]
+                    _delete_note_from_db(conn, note_id)
+                for note_id, file_path in moves.items():
+                    at = file_path.relative_to(vault.root).as_posix()
+                    conn.execute("UPDATE notes SET path = ? WHERE id = ?", (at, note_id))
+            except Exception as e:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK TO sync_moves")
+                    conn.execute("RELEASE sync_moves")
+                # Nothing moved: the files sync by path, as before.
+                moves.clear()
+                displaced.clear()
+                _record_error(at, e)
+            else:
+                conn.execute("RELEASE sync_moves")
         for note_id, file_path in moves.items():
             rel = file_path.relative_to(vault.root).as_posix()
-            try:
-                conn.execute("UPDATE notes SET path = ? WHERE id = ?", (rel, note_id))
-            except Exception as e:
-                _record_error(rel, e)
-                continue
+            old_rel = id_to_path.get(note_id)
+            if old_rel is not None and path_to_id.get(old_rel) == note_id:
+                del path_to_id[old_rel]
             id_to_path[note_id] = rel
             path_to_id[rel] = note_id
-            to_add.remove(file_path)
-            to_update.append(file_path)
+            if file_path in to_add:
+                to_add.remove(file_path)
+                to_update.append(file_path)
+        for note_id in displaced:
+            del id_to_path[note_id]
+            changed_ids.add(note_id)
+            result.deleted += 1
+        # A path whose row moved away, and that took no other, holds a new file.
+        vacated = [p for p in to_update if p.relative_to(vault.root).as_posix() not in path_to_id]
+        for file_path in vacated:
+            to_update.remove(file_path)
+            to_add.append(file_path)
 
         # Process deletes
         for rel_path in plan.to_delete:
