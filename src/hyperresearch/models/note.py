@@ -65,6 +65,7 @@ def slugify(text: str) -> str:
     """
     # NFC-normalise so visually identical titles always yield the same slug.
     text = unicodedata.normalize("NFC", text).lower().strip()
+    original = text
     # Unicode-aware \w (no re.ASCII). \w has no combining marks, which carry
     # the vowel signs and viramas of Devanagari, Tamil and other abugidas:
     # stripped, 'काम' (work) became 'कम' (less). So marks are kept too.
@@ -77,9 +78,11 @@ def slugify(text: str) -> str:
     text = re.sub(r"-+", "-", text)
     result = text.strip("-")
     if not result:
-        # Fallback for titles with only punctuation/symbols
+        # Fallback for titles with only punctuation/symbols. Hash the title,
+        # not `text`: by now that is stripped to '' or '-', so every such
+        # title got the same id (note-e3b0c442, the hash of '').
         import hashlib
-        result = "note-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+        result = "note-" + hashlib.sha256(original.encode()).hexdigest()[:8]
     # Cap length twice: characters (Windows MAX_PATH) and UTF-8 bytes, since most
     # filesystems limit a filename to 255 *bytes* and one CJK character costs 3.
     if len(result) > 80:
