@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import time
 from html.parser import HTMLParser
 
@@ -86,3 +87,29 @@ def test_fenced_code_keeps_its_language_and_stays_inert():
 
     assert '<code class="language-python">&lt;script&gt;alert(1)&lt;/script&gt;\n</code>' in out
     assert "<script>" not in out
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[a](http://x/![b](x onmouseover=alert))",
+        "[a](http://x/[[t onmouseover=alert autofocus]])",
+        "![a](http://x/[[t onerror=alert]])",
+        "![a](http://x/[b](x onerror=alert))",
+    ],
+    ids=["image-in-link-url", "wiki-in-link-url", "wiki-in-image-url", "link-in-image-url"],
+)
+def test_text_inside_a_url_cannot_add_attributes(body):
+    """A URL goes into an href or src attribute, and the image, link and
+    wiki-link patterns still run over the text afterwards. Markup one of them
+    renders inside the attribute ends it at its first quote, and the note text
+    after that becomes attributes of its own, such as an event handler."""
+    assert _event_handlers(render_markdown(body)) == []
+
+
+def test_brackets_in_a_url_survive_as_character_references():
+    """The browser decodes them, so the link still goes to the same place."""
+    out = render_markdown("[local](http://[::1]:8080/x?a[]=1)")
+
+    assert '<a href="http://&#91;::1&#93;:8080/x?a&#91;&#93;=1">local</a>' in out
+    assert html.unescape("http://&#91;::1&#93;:8080/x?a&#91;&#93;=1") == "http://[::1]:8080/x?a[]=1"
