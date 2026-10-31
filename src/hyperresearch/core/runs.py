@@ -159,14 +159,36 @@ def init_run(
     return manifest
 
 
+# Fields every manifest init_run has written and that the run commands read
+# by subscript, with the type they must hold. A manifest without them is
+# reported as corrupt instead of failing later with a KeyError.
+_REQUIRED_FIELDS = {"vault_tag": str, "profile": str, "status": str, "steps": dict, "spend": dict}
+
+
+def _read_manifest(mpath: Path, vault_tag: str) -> dict:
+    """Parse and shape-check one manifest file; RunError when it is unusable."""
+    try:
+        manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise RunError(f"cannot read manifest for run '{vault_tag}': {e}") from e
+    except ValueError as e:  # JSONDecodeError, and UnicodeDecodeError for non-UTF-8 bytes
+        raise RunError(f"corrupt manifest for run '{vault_tag}': {e}") from e
+    if not isinstance(manifest, dict):
+        raise RunError(
+            f"corrupt manifest for run '{vault_tag}': expected a JSON object, "
+            f"got {type(manifest).__name__}"
+        )
+    bad = [k for k, kind in _REQUIRED_FIELDS.items() if not isinstance(manifest.get(k), kind)]
+    if bad:
+        raise RunError(f"corrupt manifest for run '{vault_tag}': missing or invalid {bad}")
+    return manifest
+
+
 def load_manifest(vault, vault_tag: str) -> dict:
     mpath = manifest_path(vault, vault_tag)
     if not mpath.exists():
         raise RunError(f"no run '{vault_tag}' (missing {mpath})")
-    try:
-        return json.loads(mpath.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise RunError(f"corrupt manifest for run '{vault_tag}': {e}") from e
+    return _read_manifest(mpath, vault_tag)
 
 
 def _save(vault, vault_tag: str, manifest: dict) -> None:
@@ -452,12 +474,17 @@ def list_runs(vault) -> list[dict]:
         if not mpath.exists():
             continue
         try:
-            m = json.loads(mpath.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+            m = _read_manifest(mpath, child.name)
+        except RunError:
             runs.append({"vault_tag": child.name, "status": "corrupt-manifest"})
             continue
         runs.append(m)
-    runs.sort(key=lambda m: m.get("started_at", ""), reverse=True)
+    # A hand-edited started_at (null, a number) sorts last rather than
+    # making the comparison raise for every run in the vault.
+    runs.sort(
+        key=lambda m: m["started_at"] if isinstance(m.get("started_at"), str) else "",
+        reverse=True,
+    )
     return runs
 
 

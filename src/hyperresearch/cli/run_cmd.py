@@ -495,11 +495,13 @@ def run_report(
                 reports.append(run_report_data(vault, tag))
             except (RunError, VaultError):
                 continue
+        # .get: one run's hand-edited spend block must not fail the rollup
+        # for every other run.
         agg = {
             "runs": len(reports),
-            "total_estimated_usd": round(sum(r["spend"]["estimated_usd"] for r in reports), 2),
-            "total_sources": sum(r["spend"]["sources_fetched"] for r in reports),
-            "total_agents": sum(r["spend"]["agents_spawned"] for r in reports),
+            "total_estimated_usd": round(sum(r["spend"].get("estimated_usd", 0.0) for r in reports), 2),
+            "total_sources": sum(r["spend"].get("sources_fetched", 0) for r in reports),
+            "total_agents": sum(r["spend"].get("agents_spawned", 0) for r in reports),
             "by_run": reports,
         }
         if json_output:
