@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -103,9 +105,17 @@ def claims_search(
 ) -> None:
     """Full-text search over claims — 'which source supports X' as a query."""
     from hyperresearch.core.claims import search_claims
+    from hyperresearch.search.fts import SearchQueryError
 
     vault = _vault_or_exit(json_output)
-    rows = search_claims(vault.db, query, limit=limit)
+    try:
+        rows = search_claims(vault.db, query, limit=limit)
+    except (SearchQueryError, sqlite3.OperationalError) as exc:
+        if json_output:
+            output(error(str(exc), "SEARCH_ERROR"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {escape(str(exc))}")
+        raise typer.Exit(1) from exc
 
     if json_output:
         output(success({"claims": rows}, count=len(rows), vault=str(vault.root)), json_mode=True)
