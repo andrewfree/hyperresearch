@@ -803,7 +803,7 @@ def verify_run(vault, vault_tag: str) -> dict:
     def check(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": bool(ok), "detail": detail})
 
-    report_path = vault.root / "research" / "notes" / f"final_report_{vault_tag}.md"
+    report_path = vault.final_report_path(vault_tag)
     check("report-exists", report_path.exists(), str(report_path))
 
     report_text = ""
