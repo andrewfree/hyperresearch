@@ -105,6 +105,9 @@ _META_CHARSET_RE = re.compile(rb"""<meta[^>]+?charset\s*=\s*["']?\s*([A-Za-z0-9_
 # latin-1 maps bytes 0x80-0x9F to C1 controls, which is where such pages
 # keep their smart quotes, and the junk gate counts C1 controls as binary.
 _WINDOWS_1252_ALIASES = frozenset({"iso8859_1", "ascii"})
+# Printable ASCII, what HTML markup is written in. The backslash is left out
+# only because unicode_escape warns on it.
+_ASCII_PROBE = bytes(b for b in range(0x20, 0x7F) if b != 0x5C)
 
 
 def _sniff_html_charset(body: bytes) -> str | None:
@@ -131,7 +134,18 @@ def _sniff_html_charset(body: bytes) -> str | None:
         return "utf-8"
     if name in _WINDOWS_1252_ALIASES:
         return "cp1252"
-    return name
+    # Python knows many more codecs than browsers accept as labels. One that
+    # does not read ASCII as ASCII (UTF-32, UTF-7, EBCDIC, punycode) or
+    # cannot decode with errors="replace" (idna, undefined) is not this page's
+    # encoding, since its declaration was just read as ASCII. Browsers ignore
+    # such labels; decoding with one garbled the page or raised.
+    try:
+        ascii_compatible = (
+            _ASCII_PROBE.decode(name, errors="replace") == _ASCII_PROBE.decode("ascii")
+        )
+    except (LookupError, UnicodeError):
+        ascii_compatible = False
+    return name if ascii_compatible else None
 
 
 # Carrier-grade NAT (RFC 6598). Not covered by any ipaddress is_* property
