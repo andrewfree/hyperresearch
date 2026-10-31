@@ -210,7 +210,7 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
         # The mtime goes with the read, taken just after it: the move scan
         # reads new files long before their upserts, and an mtime taken at
         # the upsert would hide a write made in between from the next plan.
-        return read_note(file_path, vault.root, known_refs=set()), file_path.stat().st_mtime
+        return read_note(file_path, vault.root), file_path.stat().st_mtime
 
     scanned: dict[Path, tuple] = {}  # changed file -> _read(file), for its upsert
 
