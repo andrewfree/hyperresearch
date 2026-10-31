@@ -321,6 +321,13 @@ def _migrate_v14_wiki_links(conn: sqlite3.Connection) -> None:
     _resolve_null_links(conn)
 
 
+def _migrate_v15_unicode_links(conn: sqlite3.Connection) -> None:
+    """Resolve cached Unicode references even when no Markdown has changed."""
+    from hyperresearch.core.sync import _resolve_null_links
+
+    _resolve_null_links(conn)
+
+
 MIGRATIONS: dict[int, str | Callable[[sqlite3.Connection], None]] = {
     2: """
 CREATE TABLE IF NOT EXISTS tag_aliases (
@@ -371,6 +378,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
     12: _migrate_v12_oa_recovery_kind,
     13: _migrate_v13_nullable_retraction,
     14: _migrate_v14_wiki_links,
+    15: _migrate_v15_unicode_links,
 }
 
 
