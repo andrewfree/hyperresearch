@@ -70,7 +70,7 @@ def _render_installed(
     state = _get_render_state()
     rendered = render_prompt(content, state["context"])
     rendered = re.sub(
-        r"(?<![\w.-])research/",
+        r"(?<![\w./-])research/",
         lambda _: state["research_dir"].rstrip("/") + "/",
         rendered,
     )
