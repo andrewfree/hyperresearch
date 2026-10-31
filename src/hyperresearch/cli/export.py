@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer()
 
@@ -91,6 +92,21 @@ def export_vault(
     rows = vault.db.execute(f"SELECT id, path, title FROM notes n WHERE {where}", params).fetchall()
 
     out_dir = Path(output_path).resolve()
+    # Into the vault root every copy is its own source file (copy2 raised
+    # SameFileError); under research/ sync would index the copies as
+    # duplicate notes.
+    research_dir = vault.research_dir.resolve()
+    if out_dir == vault.root.resolve() or out_dir.is_relative_to(research_dir):
+        msg = (
+            f"Cannot export into the vault: {out_dir} is the vault root or inside "
+            f"{vault.config.research_dir}/. Choose a directory outside it."
+        )
+        if json_output:
+            output(error(msg, "EXPORT_INTO_VAULT"), json_mode=True)
+        else:
+            console.print(f"[red]{escape(msg)}[/]")
+        raise typer.Exit(1)
+
     exported = []
     for row in rows:
         src = vault.root / row["path"]
