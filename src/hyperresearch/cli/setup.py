@@ -124,9 +124,11 @@ def setup(
     from hyperresearch.core.hooks import HookRefusal, install_hooks
     from hyperresearch.core.vault import Vault, VaultError
 
-    # Init vault
+    # Init vault. Inside an existing vault, set up that vault: writing the
+    # files here would make this directory a second, empty vault.
     try:
         vault = Vault.discover(root)
+        root = vault.root
         console.print(f"  [dim]Vault:[/] {vault.root}")
     except VaultError:
         vault = Vault.init(root, name=vault_name)

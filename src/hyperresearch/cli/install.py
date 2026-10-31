@@ -263,8 +263,19 @@ def install(
             _print_codex_exec_hint()
         return
 
-    root = Path(path).resolve()
-    _require_directory(root)
+    requested = Path(path).resolve()
+    _require_directory(requested)
+
+    # A directory inside an existing vault belongs to that vault, as it does
+    # for every other command, so everything is installed at the vault root.
+    # Writing here instead put a .hyperresearch/ (for hook.js) in the
+    # subdirectory, which made it a second, empty vault that later commands
+    # run from there used, while install reported the parent.
+    try:
+        existing = Vault.discover(requested)
+    except VaultError:
+        existing = None
+    root = existing.root if existing is not None else requested
 
     # Validate the gear before anything is written, the vault included: run
     # after Vault.init, a typo left a new vault behind with the error.
@@ -275,7 +286,7 @@ def install(
 
     # First-time install in an interactive terminal → run the setup TUI instead
     # (The setup TUI configures a Claude Code install; other targets skip it.)
-    is_new = not (root / ".hyperresearch").exists()
+    is_new = existing is None
     is_interactive = not json_output and sys.stdin.isatty()
     if is_new and is_interactive and targets == ["claude"]:
         from hyperresearch.cli.setup import setup
@@ -284,10 +295,10 @@ def install(
         return
 
     # Step 1: Init vault (skip if already exists)
-    try:
-        vault = Vault.discover(root)
+    if existing is not None:
+        vault = existing
         vault_action = "existing"
-    except VaultError:
+    else:
         try:
             vault = Vault.init(root, name=name, platforms=tuple(targets))
             vault_action = "created"
@@ -335,7 +346,12 @@ def install(
         if vault_action == "created":
             console.print(f"[green]Vault created:[/] {vault.root}")
         else:
-            console.print(f"[dim]Vault exists:[/] {vault.root}")
+            console.print(f"[dim]Vault exists:[/] {escape(str(vault.root))}")
+            if requested != vault.root:
+                console.print(
+                    f"[dim]{escape(str(requested))} is inside the vault, so it was "
+                    "installed at the vault root.[/]"
+                )
 
         if doc_actions:
             console.print("[green]Agent docs:[/]")
