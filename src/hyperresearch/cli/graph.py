@@ -146,7 +146,7 @@ def graph_orphans(
 def graph_broken(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
-    """Find broken [[links]] that don't resolve."""
+    r"""Find broken [\[links]] that don't resolve."""
     vault = discover_vault(json_output)
     vault.auto_sync()
 
@@ -185,7 +185,7 @@ def graph_stub(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview what would be created"),
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
-    """Create stub notes for all broken [[links]]."""
+    r"""Create stub notes for all broken [\[links]]."""
     from hyperresearch.core.stubs import create_stubs
     vault = discover_vault(json_output)
     vault.auto_sync()
