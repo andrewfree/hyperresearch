@@ -65,7 +65,14 @@ def slugify(text: str) -> str:
     """
     # NFC-normalise so visually identical titles always yield the same slug.
     text = unicodedata.normalize("NFC", text).lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)  # Unicode-aware \w — no re.ASCII
+    # Unicode-aware \w (no re.ASCII). \w has no combining marks, which carry
+    # the vowel signs and viramas of Devanagari, Tamil and other abugidas:
+    # stripped, 'काम' (work) became 'कम' (less). So marks are kept too.
+    text = re.sub(
+        r"[^\w\s-]",
+        lambda m: m.group() if unicodedata.category(m.group()).startswith("M") else "",
+        text,
+    )
     text = re.sub(r"\s+", "-", text)
     text = re.sub(r"-+", "-", text)
     result = text.strip("-")
