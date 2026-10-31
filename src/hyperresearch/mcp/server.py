@@ -310,7 +310,7 @@ async def fetch_url(url: str, tags: str = "", provider: str = "") -> str:
     """
     import anyio
 
-    from hyperresearch.core.fetcher import prepare_fetch, save_fetched
+    from hyperresearch.core.fetcher import DuplicateURLError, prepare_fetch, save_fetched
 
     vault = _get_vault()
     vault.auto_sync()
@@ -324,7 +324,7 @@ async def fetch_url(url: str, tags: str = "", provider: str = "") -> str:
         fetched = await anyio.to_thread.run_sync(prov.fetch, url)
         result = save_fetched(vault, url, prov, fetched, tags=tag_list)
         return json.dumps({"ok": True, "data": result})
-    except ValueError as e:
+    except DuplicateURLError as e:
         return json.dumps({"ok": False, "error": str(e), "error_code": "DUPLICATE_URL"})
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e), "error_code": "FETCH_ERROR"})
