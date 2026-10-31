@@ -237,7 +237,6 @@ def fetch(
     from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
     from hyperresearch.core.vault import Vault, VaultError
-    from hyperresearch.web.base import get_provider
     from hyperresearch.web.pdf import PDF_FAILURE_KEY
 
     try:
@@ -315,14 +314,7 @@ def fetch(
             visible = True
 
     # Fetch content
-    prov = get_provider(
-        provider_name or vault.config.web_provider,
-        profile=vault.config.web_profile,
-        magic=vault.config.web_magic,
-        headless=not visible,
-        settings=vault.config.fetch,
-        gates=vault.config.junk,
-    )
+    prov = _load_provider(vault, provider_name, json_output, headless=not visible)
     if not json_output:
         console.print(f"[dim]Fetching with {prov.name}...[/]")
 
@@ -649,6 +641,34 @@ def fetch(
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
             console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{escape(note_id)}/")
+
+
+def _load_provider(vault, provider_name: str | None, json_output: bool, headless: bool = True):
+    """get_provider with the vault's settings, for a CLI command.
+
+    A provider that cannot load raises from get_provider: ValueError for an
+    unknown name, RuntimeError for a missing API key, ImportError for a
+    missing extra. Uncaught, that was a traceback and an empty stdout under
+    --json; this answers with the error envelope and exits 1 instead.
+    """
+    from hyperresearch.web.base import get_provider
+
+    try:
+        return get_provider(
+            provider_name or vault.config.web_provider,
+            profile=vault.config.web_profile,
+            magic=vault.config.web_magic,
+            headless=headless,
+            settings=vault.config.fetch,
+            gates=vault.config.junk,
+        )
+    except (ValueError, RuntimeError, ImportError) as exc:
+        code = "BAD_PROVIDER" if isinstance(exc, ValueError) else "PROVIDER_UNAVAILABLE"
+        if json_output:
+            output(error(str(exc), code), json_mode=True)
+        else:
+            console.print(f"[red]Provider unavailable:[/] {escape(str(exc))}")
+        raise typer.Exit(1)
 
 
 def _url_parse_error(url: str) -> str | None:
