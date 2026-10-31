@@ -70,9 +70,11 @@ def _image(url: str, alt: str) -> str:
 # stalls every viewer thread. No bracket pattern may rescan text that the
 # next candidate scans again: link text stops at the next '[' and a URL at
 # the next '(' or ')', so each byte is scanned a bounded number of times.
-# A URL may still hold balanced (...) pairs, as Wikipedia URLs do.
+# A URL may still hold balanced (...) pairs, as Wikipedia URLs do. It never
+# holds a raw '"': the body was escaped, so one is an image rendered just
+# before ('[a](x![b](c))'), and its quotes would end the href.
 _LINK_TEXT = r"[^\[\]]"
-_LINK_URL = r"((?:[^()]|\([^()]*\))+)"
+_LINK_URL = r'((?:[^()"]|\([^()"]*\))+)'
 
 # Simple markdown patterns
 MD_PATTERNS = [
@@ -89,10 +91,11 @@ MD_PATTERNS = [
     (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
     # Code
     (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+    # Images, before links: the link pattern also matches the "[alt](url)"
+    # inside "![alt](url)" and would leave "!<a ...>" behind.
+    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
     # Links
     (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
-    # Images
-    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
     # Horizontal rule
     (re.compile(r"^---+$", re.MULTILINE), r"<hr>"),
     # Blockquotes
