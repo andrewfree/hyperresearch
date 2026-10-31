@@ -338,6 +338,24 @@ class VaultConfig:
         return key if _BARE_KEY.fullmatch(key) else VaultConfig._toml_string(key)
 
     @staticmethod
+    def _toml_number(value) -> str:
+        # Written bare, so anything but a number (the raw `config set`
+        # argument, say) would come out as `boost_evergreen = high`. A numeric
+        # string, which a hand-quoted `"1.5"` loads as, still goes out as the
+        # number, as it always has.
+        if isinstance(value, str):
+            try:
+                value = int(value)
+            except ValueError:
+                try:
+                    value = float(value)
+                except ValueError:
+                    raise ValueError(f"expected a number, got {value!r}") from None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"expected a number, got {value!r}")
+        return str(value)
+
+    @staticmethod
     def _toml_array(items) -> str:
         quoted = ", ".join(VaultConfig._toml_string(str(item)) for item in items)
         return f"[{quoted}]"
@@ -374,16 +392,16 @@ class VaultConfig:
             f"research_dir = {self._toml_string(self.research_dir)}",
             "",
             "[search]",
-            f"title_weight = {self.search_title_weight}",
-            f"body_weight = {self.search_body_weight}",
-            f"tags_weight = {self.search_tags_weight}",
-            f"aliases_weight = {self.search_aliases_weight}",
-            f"boost_evergreen = {self.search_boost_evergreen}",
-            f"penalize_deprecated = {self.search_penalize_deprecated}",
-            f"penalize_stale = {self.search_penalize_stale}",
-            f"default_limit = {self.search_default_limit}",
-            f"chars_per_token = {self.search_chars_per_token}",
-            f"snippet_len = {self.search_snippet_len}",
+            f"title_weight = {self._toml_number(self.search_title_weight)}",
+            f"body_weight = {self._toml_number(self.search_body_weight)}",
+            f"tags_weight = {self._toml_number(self.search_tags_weight)}",
+            f"aliases_weight = {self._toml_number(self.search_aliases_weight)}",
+            f"boost_evergreen = {self._toml_number(self.search_boost_evergreen)}",
+            f"penalize_deprecated = {self._toml_number(self.search_penalize_deprecated)}",
+            f"penalize_stale = {self._toml_number(self.search_penalize_stale)}",
+            f"default_limit = {self._toml_number(self.search_default_limit)}",
+            f"chars_per_token = {self._toml_number(self.search_chars_per_token)}",
+            f"snippet_len = {self._toml_number(self.search_snippet_len)}",
             "",
             "[web]",
             f"provider = {self._toml_string(self.web_provider)}",
@@ -447,9 +465,17 @@ class VaultConfig:
         for overlay_name, table in self.profile_overlays.items():
             lines += ["", f"[profile.{self._toml_key(overlay_name)}]"]
             lines += [f"{self._toml_key(k)} = {self._toml_value(v)}" for k, v in table.items()]
+        text = "\n".join(lines) + "\n"
+        # Every command loads this file first, so text that does not parse
+        # would lock the user out of all of them, `config set` included.
+        # Refuse before the old file is touched.
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"refusing to write an unreadable {config_path.name}: {exc}") from exc
         config_path.parent.mkdir(parents=True, exist_ok=True)
         # Explicit UTF-8. TOML is UTF-8 by spec and `load` reads it as such, so
         # taking the platform default here (cp1252 on Windows) writes a file
         # this same class cannot read back the moment any value or comment
         # carries a non-ASCII character.
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        config_path.write_text(text, encoding="utf-8")
