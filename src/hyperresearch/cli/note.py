@@ -16,6 +16,10 @@ from hyperresearch.models.output import error, success
 app = typer.Typer()
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def _open_in_editor(path: Path) -> None:
     """Open `path` in $EDITOR (else $VISUAL), split like a shell command line.
 
@@ -34,13 +38,13 @@ def _open_in_editor(path: Path) -> None:
     editor = (
         os.environ.get("EDITOR")
         or os.environ.get("VISUAL")
-        or ("notepad" if os.name == "nt" else "vim")
+        or ("notepad" if _is_windows() else "vim")
     )
     try:
         # The path to a program, spaces and all, still names it unquoted.
         if os.path.isfile(editor):
             argv = [editor]
-        elif os.name == "nt":
+        elif _is_windows():
             # posix=False keeps the quotes around a quoted path; drop them.
             # Single ones too: Git for Windows writes its editor commands as
             # 'C:/Program Files/Notepad++/notepad++.exe' -multiInst.
