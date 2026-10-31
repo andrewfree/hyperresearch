@@ -99,8 +99,15 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
         return plan
 
     runs_dir = kb_dir / "runs"
+    internal_dirs = tuple((vault.root / name).resolve() for name in (
+        ".hyperresearch", ".git", ".claude", ".codex", ".agents",
+    ))
     disk_files: dict[str, float] = {}
     for md_file in kb_dir.rglob("*.md"):
+        # Older vaults can use the root as research_dir. Templates and
+        # runtime instructions are never notes, even under that layout.
+        if any(md_file.resolve().is_relative_to(directory) for directory in internal_dirs):
+            continue
         # Skip staging files at the research/ root. Real notes live in
         # research/notes/** or research/index/**.
         if md_file.parent == kb_dir:

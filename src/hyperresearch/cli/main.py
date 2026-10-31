@@ -23,8 +23,18 @@ def init(
     """Initialize a new hyperresearch vault (Claude Code integration)."""
     from hyperresearch.core.vault import Vault, VaultError
 
+    root = Path(path).resolve()
+    kb_dir = (root / research_dir).resolve()
+    if kb_dir == root or not kb_dir.is_relative_to(root):
+        msg = "Research directory must be a subdirectory inside the vault root"
+        if json_output:
+            output(error(msg, "INVALID_RESEARCH_DIR"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {msg}")
+        raise typer.Exit(1)
+
     try:
-        vault = Vault.init(Path(path).resolve(), name=name, research_dir=research_dir)
+        vault = Vault.init(root, name=name, research_dir=research_dir)
         data = {"vault_path": str(vault.root), "name": name}
         if json_output:
             output(success(data), json_mode=True)
