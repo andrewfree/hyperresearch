@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 
 import typer
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.models.output import success
 
 app = typer.Typer()
@@ -18,9 +18,7 @@ def tag_list(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """List all tags with note counts."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
     rows = vault.db.execute(
         "SELECT tag, COUNT(*) as count FROM tags GROUP BY tag HAVING count >= ? ORDER BY count DESC",
@@ -48,9 +46,7 @@ def tag_alias(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Create a tag alias. Notes with the variant tag will be indexed under the canonical tag."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.db.execute(
         "INSERT OR REPLACE INTO tag_aliases (alias, canonical) VALUES (?, ?)",
         (from_tag.lower(), to_tag.lower()),
@@ -70,9 +66,7 @@ def tag_suggest(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Suggest tag merges based on string similarity."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(

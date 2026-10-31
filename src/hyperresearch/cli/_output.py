@@ -10,10 +10,28 @@ from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
 
-from hyperresearch.models.output import Envelope
+from hyperresearch.models.output import Envelope, error
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+def discover_vault(json_output: bool = False):
+    """Vault.discover(), or the NO_VAULT error and exit 1.
+
+    Under --json the error is the envelope on stdout: an uncaught VaultError
+    printed a traceback and left stdout empty for the caller parsing it.
+    """
+    from hyperresearch.core.vault import Vault, VaultError
+
+    try:
+        return Vault.discover()
+    except VaultError as e:
+        if json_output:
+            output(error(str(e), "NO_VAULT"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {e}")
+        raise typer.Exit(1)
 
 
 def output(data: Any, *, json_mode: bool = False, **kwargs: Any) -> None:
