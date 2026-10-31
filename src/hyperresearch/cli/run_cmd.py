@@ -188,24 +188,12 @@ def run_resume(
 ) -> None:
     """Print the exact position a recovering orchestrator should continue from."""
     from hyperresearch.core.hooks import step_skill_slug
-    from hyperresearch.core.runs import (
-        RunError,
-        clear_count_block,
-        load_manifest,
-        run_resume_position,
-        set_status,
-    )
+    from hyperresearch.core.runs import RunError, resume_run, run_resume_position
 
     vault = _vault_or_exit(json_output)
     tag = _resolve_tag(vault, vault_tag, json_output)
     try:
-        manifest = load_manifest(vault, tag)
-        if manifest["status"] == "blocked" and manifest.get("blocked_on") in (
-            "max_sources", "max_notes"
-        ):
-            manifest = clear_count_block(vault, tag)
-        elif manifest["status"] in ("paused", "blocked", "failed"):
-            manifest = set_status(vault, tag, "running")
+        manifest = resume_run(vault, tag)
         position = run_resume_position(vault, manifest)
         run_dir = str(vault.run_dir(tag))
     except (RunError, VaultError) as e:
