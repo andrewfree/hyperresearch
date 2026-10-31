@@ -7,6 +7,7 @@ platform's files land.
 
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 
 import typer
@@ -16,6 +17,22 @@ from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
 
 
+def _install_errors(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (OSError, UnicodeDecodeError) as exc:
+            if kwargs.get("json_output", False):
+                output(error(str(exc), "INSTALL_ERROR"), json_mode=True)
+            else:
+                console.print(f"[red]Error:[/] {escape(str(exc))}")
+            raise typer.Exit(1) from exc
+
+    return wrapped
+
+
+@_install_errors
 def install(
     path: str = typer.Argument(".", help="Path to install in"),
     name: str = typer.Option("Research Base", "--name", "-n", help="Vault name"),
