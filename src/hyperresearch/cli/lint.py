@@ -7,10 +7,11 @@ import re
 from datetime import UTC
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.core.hooks import SCAFFOLD_ONLY_SECTION_HEADERS
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer(invoke_without_command=True)
 
@@ -235,7 +236,6 @@ def _check_retracted_citations(vault, conn, report_path, report_text) -> list[di
 @app.callback(invoke_without_command=True)
 def lint(
     ctx: typer.Context,
-    fix: bool = typer.Option(False, "--fix", help="Auto-fix what's possible"),
     rule: str | None = typer.Option(None, "--rule", "-r", help="Run specific rule only"),
     audit_file: str | None = typer.Option(
         None,
@@ -251,6 +251,15 @@ def lint(
     """Health-check the vault."""
     if ctx.invoked_subcommand is not None:
         return
+
+    # An unknown name would run no rule and report a healthy vault.
+    if rule is not None and rule not in RULES:
+        msg = f"Unknown lint rule '{rule}'. Valid rules: {', '.join(RULES)}"
+        if json_output:
+            output(error(msg, "UNKNOWN_RULE"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {escape(msg)}")
+        raise typer.Exit(1)
 
     from hyperresearch.core.vault import Vault
 
@@ -1694,11 +1703,13 @@ def lint(
             })
 
     if "orphaned-notes" in rules_to_run:
-        for row in conn.execute("""
+        from hyperresearch.core.graphrank import NOTE_LINKS_SQL
+
+        for row in conn.execute(f"""
             SELECT n.id, n.path FROM notes n
             WHERE n.type NOT IN ('index', 'raw')
-              AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-              AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+              AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+              AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
         """):
             issues.append({
                 "rule": "orphaned-notes",
@@ -1827,7 +1838,11 @@ def lint(
             style = severity_style.get(issue.get("severity", "info"), "dim")
             loc = issue.get("note_path", issue.get("note_id", ""))
             line = f" line {issue['line']}" if issue.get("line") else ""
-            console.print(f"  [{style}]{issue['rule']}[/] {loc}{line}: {issue['message']}")
+            # Messages quote vault text such as '[[ref]]', which Rich would
+            # read as a style tag and drop.
+            console.print(
+                f"  [{style}]{issue['rule']}[/] {escape(str(loc))}{line}: {escape(issue['message'])}"
+            )
 
         console.print(
             f"\n[bold]Summary:[/] {summary['errors']} errors, "

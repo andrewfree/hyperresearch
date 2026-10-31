@@ -37,6 +37,21 @@ def link(
             console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
 
+    # An empty --tag or --note names no notes. Read as a missing option it
+    # would select every note, so `--auto --tag ""` linked the whole vault.
+    empty = None
+    if tag is not None and not tag.strip():
+        empty = "--tag"
+    elif any(not n.strip() for n in note_ids):
+        empty = "--note"
+    if empty:
+        msg = f"{empty} must not be empty"
+        if json_output:
+            output(error(msg, "NO_INPUT"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {msg}")
+        raise typer.Exit(1)
+
     vault.auto_sync()
 
     # Determine which notes to process. None means every note; a --note/--tag
@@ -51,7 +66,7 @@ def link(
         ).fetchall()
         ids_to_process = [r["id"] for r in rows]
         selection = f"--note {', '.join(note_ids)}"
-    elif tag:
+    elif tag is not None:
         rows = vault.db.execute(
             "SELECT note_id FROM tags WHERE tag = ?", (tag.lower(),)
         ).fetchall()

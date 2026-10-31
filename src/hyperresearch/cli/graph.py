@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -16,16 +17,17 @@ def graph_backlinks(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show what links TO this note."""
+    from hyperresearch.core.graphrank import NOTE_LINKS_SQL
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
     vault.auto_sync()
 
     rows = vault.db.execute(
-        """
+        f"""
         SELECT l.source_id, n.title as source_title, n.path as source_path,
                l.line_number, l.context
-        FROM links l
+        FROM ({NOTE_LINKS_SQL}) l
         JOIN notes n ON l.source_id = n.id
         WHERE l.target_id = ?
         ORDER BY n.title
@@ -108,7 +110,9 @@ def graph_outlinks(
         for ol in outlinks:
             status = "[green]OK[/]" if ol["resolved"] else "[red]BROKEN[/]"
             title = ol.get("target_title") or ol["target_ref"]
-            console.print(f"  {status} [[{ol['target_ref']}]] → {title}")
+            # Escaped: Rich reads the '[ref]' inside '[[ref]]' as a style tag.
+            link = escape("[[" + ol["target_ref"] + "]]")
+            console.print(f"  {status} {link} → {escape(title)}")
 
 
 @app.command("orphans")
@@ -116,17 +120,18 @@ def graph_orphans(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Find notes with no inbound or outbound links."""
+    from hyperresearch.core.graphrank import NOTE_LINKS_SQL
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
     vault.auto_sync()
 
-    rows = vault.db.execute("""
+    rows = vault.db.execute(f"""
         SELECT n.id, n.title, n.path, n.status
         FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
         ORDER BY n.title
     """).fetchall()
 
@@ -179,10 +184,8 @@ def graph_broken(
             return
         console.print(f"[bold red]Broken links ({len(broken)}):[/]")
         for b in broken:
-            console.print(
-                f"  [cyan]{b['source_id']}[/] line {b['line_number']}: "
-                f"[[{b['target_ref']}]]"
-            )
+            link = escape("[[" + b["target_ref"] + "]]")
+            console.print(f"  [cyan]{b['source_id']}[/] line {b['line_number']}: {link}")
 
 
 @app.command("stub")
@@ -257,15 +260,16 @@ def graph_hubs(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show most-linked-to notes."""
+    from hyperresearch.core.graphrank import NOTE_LINKS_SQL
     from hyperresearch.core.vault import Vault
 
     vault = Vault.discover()
     vault.auto_sync()
 
     rows = vault.db.execute(
-        """
+        f"""
         SELECT l.target_id, n.title, COUNT(*) as inbound
-        FROM links l
+        FROM ({NOTE_LINKS_SQL}) l
         JOIN notes n ON l.target_id = n.id
         WHERE l.target_id IS NOT NULL
         GROUP BY l.target_id
