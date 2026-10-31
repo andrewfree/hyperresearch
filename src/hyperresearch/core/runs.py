@@ -617,14 +617,17 @@ def resume_run(vault, vault_tag: str) -> dict:
     manifest = load_manifest(vault, vault_tag)
     if manifest["status"] not in ("paused", "blocked", "failed"):
         return manifest
-    with manifest_lock(vault, vault_tag):
-        # Another resume or abort may have won while we waited for the lock.
-        manifest = load_manifest(vault, vault_tag)
-        if manifest["status"] == "blocked" and manifest.get("blocked_on") in _COUNT_BLOCK_REASONS:
-            return clear_count_block(vault, vault_tag)
-        if manifest["status"] in ("paused", "blocked", "failed"):
-            return set_status(vault, vault_tag, "running")
-        return manifest
+    try:
+        with manifest_lock(vault, vault_tag):
+            # Another resume or abort may have won while we waited for the lock.
+            manifest = load_manifest(vault, vault_tag)
+            if manifest["status"] == "blocked" and manifest.get("blocked_on") in _COUNT_BLOCK_REASONS:
+                return clear_count_block(vault, vault_tag)
+            if manifest["status"] in ("paused", "blocked", "failed"):
+                return set_status(vault, vault_tag, "running")
+            return manifest
+    except OSError as e:
+        raise RunError(f"cannot resume run '{vault_tag}': {e}") from e
 
 
 def resume_position(manifest: dict, required_steps: set[str] | None = None) -> dict:
