@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from hyperresearch.core.patterns import mask_code
+
 # Minimum title length to consider for auto-linking (avoids false positives on short generic titles)
 MIN_TITLE_LEN = 15
 
@@ -63,7 +65,17 @@ def auto_link(vault, note_ids: list[str] | None = None, *, dry_run: bool = False
         if not note_path.exists():
             continue
 
-        linked = _link_note(note_path, nid, ref_vocab, dry_run=dry_run)
+        # The notes this one already links, as sync resolved them: a link
+        # written by title, alias or case variant names a note id that its
+        # raw [[...]] text does not.
+        linked_ids = {
+            r["target_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT target_id FROM links WHERE source_id = ? AND target_id IS NOT NULL",
+                (nid,),
+            )
+        }
+        linked = _link_note(note_path, nid, ref_vocab, linked_ids, dry_run=dry_run)
         if linked:
             report[nid] = linked
 
@@ -71,7 +83,12 @@ def auto_link(vault, note_ids: list[str] | None = None, *, dry_run: bool = False
 
 
 def _link_note(
-    note_path: Path, note_id: str, ref_vocab: dict[str, str], *, dry_run: bool = False
+    note_path: Path,
+    note_id: str,
+    ref_vocab: dict[str, str],
+    linked_ids: set[str],
+    *,
+    dry_run: bool = False,
 ) -> list[str]:
     """Scan a single note for mentions of other notes and append a Related section.
 
@@ -83,10 +100,20 @@ def _link_note(
     parts = content.split("---", 2)
     body = parts[2] if len(parts) >= 3 else content
 
-    body_lower = body.lower()
+    # Mentions inside fenced blocks or inline code spans are code, not prose,
+    # as for wiki-links themselves (strip_code); masking keeps word boundaries.
+    body_lower = mask_code(body).lower()
 
-    # Find existing wiki-links so we don't duplicate
-    existing_links = set(re.findall(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", body))
+    # Find existing wiki-links so we don't duplicate. Each raw target is read
+    # the way the vocabulary reads mentions (case-insensitive id, title or
+    # alias), less any '#heading', which sync does not resolve; linked_ids
+    # adds the refs sync did resolve.
+    existing_links = set(linked_ids)
+    for raw in re.findall(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", body):
+        existing_links.add(raw)
+        target = raw.split("#", 1)[0].strip().lower()
+        if target in ref_vocab:
+            existing_links.add(ref_vocab[target])
 
     # Find mentions of other notes' titles in the body
     found_links: list[str] = []
@@ -97,14 +124,11 @@ def _link_note(
         # Skip if already linked
         if ref_id in existing_links:
             continue
-        # Check for whole-word match (not inside code blocks or existing links)
+        # Check for whole-word match (not inside code or existing links)
         # Use word boundary matching
         pattern = r"(?<!\[\[)\b" + re.escape(ref_text) + r"\b"
         if re.search(pattern, body_lower):
-            # Verify it's not inside a code block
-            match = re.search(pattern, body_lower)
-            if match and not _in_code_block(body, match.start()):
-                found_links.append(ref_id)
+            found_links.append(ref_id)
 
     if not found_links:
         return []
@@ -140,11 +164,3 @@ def _link_note(
 
     note_path.write_text(new_content, encoding="utf-8")
     return found_links
-
-
-def _in_code_block(text: str, pos: int) -> bool:
-    """Check if a position in text is inside a fenced code block."""
-    # Count ``` before this position
-    fences_before = text[:pos].count("```")
-    # Odd number means we're inside a code block
-    return fences_before % 2 == 1
