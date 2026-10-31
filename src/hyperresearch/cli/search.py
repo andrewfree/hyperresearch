@@ -237,4 +237,8 @@ def search(
             )
             if r.get("snippet"):
                 console.print(f"    [dim]{r['snippet'][: vault.config.search_snippet_len]}[/]")
+            if include_body and r.get("body"):
+                # Verbatim: a body is note text, never Rich markup.
+                console.print()
+                console.print(r["body"], markup=False, highlight=False, soft_wrap=True)
             console.print()
