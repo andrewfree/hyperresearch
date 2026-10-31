@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html as html_mod
 import json
+import re
 import socket
 import sqlite3
 import sys
@@ -15,6 +16,12 @@ from hyperresearch.serve.renderer import render_markdown
 # BSD-derived stacks (macOS included) let a SO_REUSEADDR bind to a specific
 # address succeed beside another socket's wildcard bind on the same port.
 _REUSEADDR_BINDS_BESIDE_WILDCARD = sys.platform == "darwin" or "bsd" in sys.platform
+
+# DNS rebinding: a page on an attacker's domain can re-point that name at
+# 127.0.0.1 and then read the vault as same-origin, but the browser still
+# sends the attacker's hostname. Only loopback names are answered. Any port
+# is accepted, so a tunnelled local port (ssh -L 9000:...) keeps working.
+_LOOPBACK_HOST_RE = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?", re.IGNORECASE)
 
 # -- Vintage cream & dark brown theme --
 CSS = """
@@ -367,7 +374,20 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
                 self._db.close()
                 self._db = None
 
+    def _addressed_to_loopback(self) -> bool:
+        # An absolute-form target ("GET http://host/...") names the host too.
+        hosts = self.headers.get_all("Host", [])
+        target_host = urllib.parse.urlsplit(self.path).netloc
+        if target_host:
+            hosts.append(target_host)
+        # No Host at all cannot come from a browser, so it is not a rebinding page.
+        return all(_LOOPBACK_HOST_RE.fullmatch(h.strip()) for h in hosts)
+
     def do_GET(self):
+        if not self._addressed_to_loopback():
+            # Before any page is built: every page's nav lists note titles.
+            self.send_error(403, "Host not allowed")
+            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
