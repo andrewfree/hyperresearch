@@ -14,6 +14,14 @@ from hyperresearch.models.output import error, success
 app = typer.Typer()
 
 
+def _same_dir(path: Path, other: Path) -> bool:
+    """Whether `path` exists and is the same directory as `other`."""
+    try:
+        return path.samefile(other)
+    except OSError:
+        return False
+
+
 @app.command("json")
 def export_json(
     output_path: str | None = typer.Option(None, "--output", "-o", help="Output file path"),
@@ -94,9 +102,12 @@ def export_vault(
     out_dir = Path(output_path).resolve()
     # Into the vault root every copy is its own source file (copy2 raised
     # SameFileError); under research/ sync would index the copies as
-    # duplicate notes.
-    research_dir = vault.research_dir.resolve()
-    if out_dir == vault.root.resolve() or out_dir.is_relative_to(research_dir):
+    # duplicate notes. Compared as directories, not as strings: on a
+    # case-insensitive filesystem resolve() keeps the case that was typed,
+    # so ./RESEARCH/x is research/x but its path does not say so.
+    if _same_dir(out_dir, vault.root) or any(
+        _same_dir(d, vault.research_dir) for d in (out_dir, *out_dir.parents)
+    ):
         msg = (
             f"Cannot export into the vault: {out_dir} is the vault root or inside "
             f"{vault.config.research_dir}/. Choose a directory outside it."
