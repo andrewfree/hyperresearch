@@ -236,7 +236,6 @@ def _check_retracted_citations(vault, conn, report_path, report_text) -> list[di
 @app.callback(invoke_without_command=True)
 def lint(
     ctx: typer.Context,
-    fix: bool = typer.Option(False, "--fix", help="Auto-fix what's possible"),
     rule: str | None = typer.Option(None, "--rule", "-r", help="Run specific rule only"),
     audit_file: str | None = typer.Option(
         None,
