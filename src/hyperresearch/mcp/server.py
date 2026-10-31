@@ -390,6 +390,8 @@ def update_note(note_id: str, status: str = "", add_tags: str = "", remove_tags:
         remove_tags: Comma-separated tags to remove
         summary: New summary text
     """
+    from datetime import UTC, datetime
+
     from hyperresearch.core.frontmatter import (
         FrontmatterBrokenError,
         parse_frontmatter_for_update,
@@ -446,6 +448,7 @@ def update_note(note_id: str, status: str = "", add_tags: str = "", remove_tags:
     if not changed:
         return json.dumps({"ok": True, "data": {"note_id": note_id, "changes": []}})
 
+    meta.updated = datetime.now(UTC)
     file_path.write_text(serialize_frontmatter(meta) + "\n" + body, encoding="utf-8")
 
     plan = compute_sync_plan(vault)
