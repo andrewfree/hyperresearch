@@ -1,8 +1,11 @@
-"""lint rejects an unknown --rule name.
+"""lint rejects an unknown --rule name and no longer offers a no-op --fix.
 
 `rules_to_run = [rule]` was never checked against the rule table, so a typo
 such as `-r broken-link` ran no rule at all and reported 'Vault is healthy'
 with exit 0, hiding the warnings `-r broken-links` reports.
+
+`--fix` ('Auto-fix what's possible') was declared but never read, so it
+changed nothing while the help promised fixes.
 """
 
 from __future__ import annotations
@@ -49,3 +52,19 @@ def test_unknown_rule_json_error_envelope(lint_vault):
     assert data["ok"] is False
     assert data["error_code"] == "UNKNOWN_RULE"
     assert "broken-links" in data["error"]
+
+
+def test_help_does_not_offer_fix(lint_vault):
+    result = runner.invoke(app, ["lint", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--fix" not in result.output
+    assert "Auto-fix" not in result.output
+
+
+def test_fix_is_rejected_rather_than_ignored(lint_vault):
+    notes = sorted((lint_vault / "research").rglob("*.md"))
+    before = [p.read_bytes() for p in notes]
+    result = runner.invoke(app, ["lint", "--fix"])
+    assert result.exit_code == 2  # usage error: no such option
+    assert "No such option" in result.output
+    assert [p.read_bytes() for p in notes] == before
