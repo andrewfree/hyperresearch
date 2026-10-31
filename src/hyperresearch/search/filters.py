@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
+
 
 @dataclass
 class SearchFilters:
@@ -120,16 +122,19 @@ class SearchFilters:
             )
             params.append(self.linked_to)
 
+        # Inbound counts leave out index pages, which link every note they list.
+        # A per-note count, not `id IN (targets HAVING COUNT(*) >= ?)`: a note
+        # with no inbound link is never a target, so that form dropped it even
+        # for a minimum of 0.
         if self.min_inbound is not None:
             clauses.append(
-                f"{table_alias}.id IN (SELECT target_id FROM links WHERE target_id IS NOT NULL "
-                f"GROUP BY target_id HAVING COUNT(*) >= ?)"
+                f"(SELECT COUNT(*) FROM ({NOTE_LINKS_SQL}) l WHERE l.target_id = {table_alias}.id) >= ?"
             )
             params.append(self.min_inbound)
 
         if self.has_backlinks is True:
             clauses.append(
-                f"{table_alias}.id IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)"
+                f"{table_alias}.id IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)"
             )
 
         where = " AND ".join(clauses) if clauses else "1=1"
