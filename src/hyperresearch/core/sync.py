@@ -304,11 +304,17 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
                 claimants.append(claimant)
         return claimants
 
+    # id -> the id edit, still to sync in this pass, at the path of the row
+    # that holds the id: that row renames away and frees the id.
+    releasing: dict[str, Path] = {}
+    waiting_on: dict[Path, Path] = {}  # id edit -> the id edit it waits for
+
     def _upsert_with_collision_check(file_path: Path) -> str | None:
         note, file_mtime = scanned.pop(file_path, None) or _read(file_path)
         rel = file_path.relative_to(vault.root).as_posix()
         existing = id_to_path.get(note.meta.id)
-        if existing is not None and existing != rel:
+        held = existing is not None and existing != rel
+        if held and note.meta.id not in releasing:
             result.errors.append({
                 "path": rel,
                 "error": (
@@ -365,6 +371,12 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
             keep_urls = {c.meta.source for c in old_id_claimants if c.meta.source}
             if old_id_claimants:
                 keep_assets_dir = assets_root / old_id
+        if held:
+            # The row holding the id renames away later in this pass: wait
+            # for it, with what this read found.
+            waiting_on[file_path] = releasing[note.meta.id]
+            scanned[file_path] = (note, file_mtime)
+            return None
         # A file's rename and upsert succeed or fail together, and the maps
         # change only after both: a rename left behind by a failed upsert
         # would park the row under an id a later file could take.
@@ -404,6 +416,61 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
                 "; nothing from this sync pass was kept: fix that error and run sync again"
             )
             raise _TransactionLostError from exc
+
+    def _swap_ids(ring: list[Path]) -> None:
+        """Sync id edits that trade ids in a ring (`aaa.md` now declares
+        `bbb` and `bbb.md` declares `aaa`), each waiting for the next to free
+        its id. Every row first steps aside to a parking id, then each takes
+        the id its file declares; if one fails, none is renamed."""
+        saved = dict(id_to_path), dict(path_to_id)
+        parked: list[str] = []
+        failed: Path | None = None
+        conn.execute("SAVEPOINT sync_swap")
+        for file_path in ring:
+            rel = file_path.relative_to(vault.root).as_posix()
+            old_id = path_to_id[rel]
+            parked.append(f":swapping:{old_id}")
+            try:
+                # Nothing in a ring keeps rows under its old id: a new file
+                # named after that id would have refused the edit that takes it.
+                _rename_note_id(conn, old_id, parked[-1], set())
+            except Exception as e:
+                _record_error(rel, e)
+                failed = file_path
+                break
+            del id_to_path[old_id]
+            id_to_path[parked[-1]] = rel
+            path_to_id[rel] = parked[-1]
+            changed_ids.add(old_id)
+        for file_path in ring if failed is None else ():
+            try:
+                if _upsert_with_collision_check(file_path) is not None:
+                    continue
+            except Exception as e:
+                _record_error(str(file_path), e)
+            failed = file_path
+            break
+        renamed_from.difference_update(parked)
+        changed_ids.difference_update(parked)
+        if failed is None:
+            conn.execute("RELEASE sync_swap")
+            result.updated += len(ring)
+            return
+        conn.execute("ROLLBACK TO sync_swap")
+        conn.execute("RELEASE sync_swap")
+        for live, kept in zip((id_to_path, path_to_id), saved, strict=True):
+            live.clear()
+            live.update(kept)
+        failed_rel = failed.relative_to(vault.root).as_posix()
+        for file_path in ring:
+            if file_path != failed:
+                result.errors.append({
+                    "path": file_path.relative_to(vault.root).as_posix(),
+                    "error": (
+                        f"its id edit trades ids with '{failed_rel}', which could not be "
+                        "re-indexed. Not re-indexed either: fix that file and run sync again."
+                    ),
+                })
 
     try:
         # A moved note's row goes to its new path first: the delete of its
@@ -473,12 +540,41 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
         # when an id edit and a new file claim the same id, the edit wins and
         # the new file is refused as a collision, unless the new file is named
         # after that id (see _new_files_claiming) or is a moved note's file.
+        # An id edit onto an id another id edit frees waits for that one, so
+        # a chain of them converges whatever the scan order; when every edit
+        # left waits, some trade ids in a ring, and the ring goes together.
+        release_of: dict[Path, str] = {}  # id edit -> the id its row holds
         for file_path in to_update:
-            try:
-                if _upsert_with_collision_check(file_path) is not None:
-                    result.updated += 1
-            except Exception as e:
-                _record_error(str(file_path), e)
+            own_id = path_to_id[file_path.relative_to(vault.root).as_posix()]
+            entry = scanned.get(file_path)
+            if entry and entry[0].id_declared and entry[0].meta.id != own_id:
+                releasing[own_id] = file_path
+                release_of[file_path] = own_id
+        pending = to_update
+        while pending:
+            waiting: list[Path] = []
+            for file_path in pending:
+                waiting_on.pop(file_path, None)
+                try:
+                    if _upsert_with_collision_check(file_path) is not None:
+                        result.updated += 1
+                except Exception as e:
+                    _record_error(str(file_path), e)
+                if file_path in waiting_on:
+                    waiting.append(file_path)
+                else:
+                    releasing.pop(release_of.get(file_path, ""), None)
+            if waiting and len(waiting) == len(pending):
+                # Follow the waits from one edit until they come round again.
+                ring = [waiting[0]]
+                while waiting_on[ring[-1]] not in ring:
+                    ring.append(waiting_on[ring[-1]])
+                ring = ring[ring.index(waiting_on[ring[-1]]):]
+                _swap_ids(ring)
+                for file_path in ring:
+                    waiting.remove(file_path)
+                    releasing.pop(release_of.get(file_path, ""), None)
+            pending = waiting
 
         # Process adds
         for file_path in to_add:
