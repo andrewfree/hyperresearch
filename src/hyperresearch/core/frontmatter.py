@@ -51,6 +51,10 @@ def parse_frontmatter_for_update(content: str) -> tuple[NoteMeta, str]:
     """Refuse to serialize the reader fallback metadata over a broken note."""
     message = "Cannot update note with broken or missing frontmatter."
     try:
+        match = FRONTMATTER_RE.match(content)
+        # The reader treats falsy YAML values as empty metadata, even lists.
+        if not match or not isinstance(yaml.safe_load(match.group(1)), dict):
+            raise FrontmatterBrokenError(message)
         meta, body = parse_frontmatter(content)
     except (yaml.YAMLError, ValueError) as e:
         raise FrontmatterBrokenError(message) from e
