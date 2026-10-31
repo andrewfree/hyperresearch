@@ -71,7 +71,7 @@ def _doi_key(url: str) -> str | None:
     except ValueError:
         return None
     # A `(` left open means the DOI was cut (see below), or the link was:
-    # `.../S0140-6736(20)` loses its `)` to the caller's rstrip.
+    # `.../S0140-6736(20` as written in the report.
     if not doi or doi.count("(") > doi.count(")"):
         return None
     # DOI_RE stops at `)`, which Elsevier PII and Wiley SICI DOIs contain, and
@@ -137,6 +137,17 @@ def _note_holding_doi(url: str, conn) -> str | None:
     return None
 
 
+def _trim_url(url: str) -> str:
+    """Drop the punctuation `\\S+` caught after a link: trailing `.` and `,`,
+    and a `)` only when the URL never opened it, so `(https://x/a).` loses
+    its paren while `https://en.wikipedia.org/wiki/Mercury_(planet)` keeps it."""
+    while url and url[-1] in ".,)":
+        if url[-1] == ")" and url.count("(") >= url.count(")"):
+            break
+        url = url[:-1]
+    return url
+
+
 def parse_sources_section(report_text: str, conn) -> dict[str, str | None]:
     """Map `[N]` -> note_id by matching Sources-section URLs/titles to the vault."""
     mapping: dict[str, str | None] = {}
@@ -157,7 +168,7 @@ def parse_sources_section(report_text: str, conn) -> dict[str, str | None]:
         url = None
         url_m = re.search(r"https?://\S+", rest)
         if url_m:
-            url = url_m.group(0).rstrip(".,)")
+            url = _trim_url(url_m.group(0))
             note_id = _note_for_url(url, conn)
         if note_id is None:
             title = rest.split("http")[0].strip(" .–-")
