@@ -130,3 +130,16 @@ def test_report_all_tolerates_a_spend_block_missing_counters(two_runs, monkeypat
     data = json.loads(report.stdout)["data"]
     assert data["runs"] == 2
     assert data["total_sources"] == 0
+
+
+def test_report_all_text_output_tolerates_a_spend_block_missing_counters(two_runs, monkeypatch):
+    """The per-run lines of the text rollup read the same spend block."""
+    monkeypatch.chdir(two_runs.root)
+    old = load_manifest(two_runs, OLD)
+    old["spend"] = {}
+    manifest_path(two_runs, OLD).write_text(json.dumps(old), encoding="utf-8")
+    report = runner.invoke(app, ["run", "report", "--all"])
+    assert report.exit_code == 0, report.output
+    assert "2 runs" in report.stdout
+    assert LIVE in report.stdout
+    assert OLD in report.stdout
