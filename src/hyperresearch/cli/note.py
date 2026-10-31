@@ -127,7 +127,7 @@ def note_new(
             if json_output:
                 output(error(f"Invalid --tier '{tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if content_type is not None:
         try:
@@ -137,7 +137,7 @@ def note_new(
             if json_output:
                 output(error(f"Invalid --content-type '{content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -171,7 +171,7 @@ def note_new(
             pass  # Will include warning in response below
         else:
             for s in existing:
-                console.print(f"[yellow]Similar note exists:[/] {s['id']} — {s['title']}")
+                console.print(f"[yellow]Similar note exists:[/] {escape(s['id'])} - {escape(s['title'])}")
 
     # Use template if specified. Its frontmatter gives the defaults: the
     # options given here win and tags are the union. write_note then picks
@@ -253,7 +253,7 @@ def note_new(
             data["existing_tags"] = [r["tag"] for r in top_tags]
         output(success(data, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Created:[/] {rel}")
+        console.print(f"[green]Created:[/] {escape(rel)}")
 
     if edit:
         _open_in_editor(path)
@@ -334,7 +334,7 @@ def note_show(
                 if json_output:
                     output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
                 else:
-                    console.print(f"[red]Note not found:[/] {note_id}")
+                    console.print(f"[red]Note not found:[/] {escape(note_id)}")
                 raise typer.Exit(1)
             import sys
             # Bypass text streams so line endings and UTF-8 bytes stay intact.
@@ -346,7 +346,7 @@ def note_show(
             if json_output:
                 output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
             else:
-                console.print(f"[red]Note not found:[/] {note_id}")
+                console.print(f"[red]Note not found:[/] {escape(note_id)}")
             raise typer.Exit(1)
 
         if json_output:
@@ -388,7 +388,7 @@ def note_show(
                 from rich.markdown import Markdown
                 console.print(Markdown(data.get("body", "")))
         if not_found:
-            console.print(f"\n[red]Not found:[/] {', '.join(not_found)}")
+            console.print(f"\n[red]Not found:[/] {escape(', '.join(not_found))}")
 
 
 @app.command("list")
@@ -416,7 +416,7 @@ def note_list(
             if json_output:
                 output(error(f"Invalid --tier '{tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if content_type is not None:
         try:
@@ -426,7 +426,7 @@ def note_list(
             if json_output:
                 output(error(f"Invalid --content-type '{content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -510,7 +510,7 @@ def note_edit(
 
     row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
     if not row:
-        console.print(f"[red]Not found:[/] {note_id}")
+        console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     _open_in_editor(vault.root / row["path"])
@@ -546,7 +546,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --status '{set_status}'. Must be one of: {valid}", "INVALID_STATUS"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --status '{set_status}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --status '{escape(set_status)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if set_tier is not None:
         try:
@@ -556,7 +556,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --tier '{set_tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{set_tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(set_tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if set_content_type is not None:
         try:
@@ -566,7 +566,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --content-type '{set_content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{set_content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(set_content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -577,7 +577,7 @@ def note_update(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     file_path = vault.root / row["path"]
@@ -633,7 +633,7 @@ def note_update(
     if json_output:
         output(success({"id": note_id, "changed": changed}, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Updated {note_id}:[/] {', '.join(changed)}")
+        console.print(f"[green]Updated {escape(note_id)}:[/] {escape(', '.join(changed))}")
 
 
 @app.command("mv")
@@ -667,7 +667,7 @@ def note_mv(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     old_file = vault.root / row["path"]
@@ -691,7 +691,7 @@ def note_mv(
         if json_output:
             output(error(msg, "OUTSIDE_SYNCED_TREE"), json_mode=True)
         else:
-            console.print(f"[red]{msg}[/]")
+            console.print(f"[red]{escape(msg)}[/]")
         raise typer.Exit(1)
     # samefile: on a case-insensitive filesystem a case-only rename
     # (n-f -> N-F.md) "exists" because it is the note's own file.
@@ -700,7 +700,7 @@ def note_mv(
         if json_output:
             output(error(msg, "DESTINATION_EXISTS"), json_mode=True)
         else:
-            console.print(f"[red]{msg}[/]")
+            console.print(f"[red]{escape(msg)}[/]")
         raise typer.Exit(1)
     # Resolve the parent only: on a case-insensitive filesystem resolve() on the
     # file itself returns the old spelling during a case-only rename.
@@ -718,7 +718,7 @@ def note_mv(
     if json_output:
         output(success({"old_path": row["path"], "new_path": rel_new}, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Moved:[/] {row['path']} → {rel_new}")
+        console.print(f"[green]Moved:[/] {escape(row['path'])} → {escape(rel_new)}")
 
 
 def _file_identity(path: Path) -> tuple | None:
@@ -775,7 +775,7 @@ def note_rm(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     file_path = vault.root / row["path"]
@@ -938,13 +938,13 @@ def note_rm(
     if json_output:
         output(success(payload, vault=str(vault.root)), json_mode=True)
     else:
-        msg = f"[red]Deleted:[/] {note_id}"
+        msg = f"[red]Deleted:[/] {escape(note_id)}"
         if removed_raw:
-            msg += f"\n  raw: {removed_raw}"
+            msg += f"\n  raw: {escape(removed_raw)}"
         if removed_assets:
             msg += f"\n  assets: {len(removed_assets)} file(s)"
         if assets_not_removed:
-            msg += "\n  assets not removed: " + "; ".join(assets_not_removed)
+            msg += "\n  assets not removed: " + escape("; ".join(assets_not_removed))
         console.print(msg)
 
 

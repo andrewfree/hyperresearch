@@ -51,12 +51,12 @@ def graph_backlinks(
         )
     else:
         if not backlinks:
-            console.print(f"[dim]No backlinks to {note_id}[/]")
+            console.print(f"[dim]No backlinks to {escape(note_id)}[/]")
             return
-        console.print(f"[bold]Backlinks to {note_id}:[/]")
+        console.print(f"[bold]Backlinks to {escape(note_id)}:[/]")
         for bl in backlinks:
             console.print(
-                f"  [cyan]{bl['source_id']}[/] — {bl['source_title']} "
+                f"  [cyan]{escape(bl['source_id'])}[/] - {escape(bl['source_title'])} "
                 f"[dim](line {bl['line_number']})[/]"
             )
 
@@ -100,9 +100,9 @@ def graph_outlinks(
         )
     else:
         if not outlinks:
-            console.print(f"[dim]No outgoing links from {note_id}[/]")
+            console.print(f"[dim]No outgoing links from {escape(note_id)}[/]")
             return
-        console.print(f"[bold]Links from {note_id}:[/]")
+        console.print(f"[bold]Links from {escape(note_id)}:[/]")
         for ol in outlinks:
             status = "[green]OK[/]" if ol["resolved"] else "[red]BROKEN[/]"
             title = ol.get("target_title") or ol["target_ref"]
@@ -139,7 +139,7 @@ def graph_orphans(
             return
         console.print(f"[bold]Orphan notes ({len(orphans)}):[/]")
         for o in orphans:
-            console.print(f"  [cyan]{o['id']}[/] — {o['title']}")
+            console.print(f"  [cyan]{escape(o['id'])}[/] - {escape(o['title'])}")
 
 
 @app.command("broken")
@@ -177,7 +177,7 @@ def graph_broken(
         console.print(f"[bold red]Broken links ({len(broken)}):[/]")
         for b in broken:
             link = escape("[[" + b["target_ref"] + "]]")
-            console.print(f"  [cyan]{b['source_id']}[/] line {b['line_number']}: {link}")
+            console.print(f"  [cyan]{escape(b['source_id'])}[/] line {b['line_number']}: {link}")
 
 
 @app.command("stub")
@@ -209,7 +209,7 @@ def graph_stub(
         else:
             console.print(f"[bold]Would create {len(targets)} stub notes:[/]")
             for t in targets:
-                console.print(f"  [cyan]{t}[/]")
+                console.print(f"  [cyan]{escape(t)}[/]")
         return
 
     # Stubs are sidelined to research/temp/ (not research/notes/) so they
@@ -227,7 +227,7 @@ def graph_stub(
     else:
         console.print(f"[green]Created {len(created)} stub notes:[/]")
         for c in created:
-            console.print(f"  [cyan]{c['id']}[/] — {c['title']}")
+            console.print(f"  [cyan]{escape(c['id'])}[/] - {escape(c['title'])}")
 
 
 @app.command("hubs")
@@ -265,7 +265,7 @@ def graph_hubs(
         table.add_column("Title")
         table.add_column("Inbound Links", justify="right", style="green")
         for h in hubs:
-            table.add_row(h["id"], h["title"], str(h["inbound_links"]))
+            table.add_row(escape(h["id"]), escape(h["title"]), str(h["inbound_links"]))
         console.print(table)
 
 
@@ -308,4 +308,4 @@ def graph_rank(
     else:
         console.print(f"[green]Centrality computed:[/] {ranked} notes")
         for n in top_notes:
-            console.print(f"  {n['centrality']:.4f}  [cyan]{n['id']}[/]  {n['title']}")
+            console.print(f"  {n['centrality']:.4f}  [cyan]{escape(n['id'])}[/]  {escape(n['title'])}")
