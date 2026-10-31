@@ -7,6 +7,7 @@ import time
 import typer
 
 from hyperresearch.cli._output import console
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 
 
 def watch(
@@ -98,12 +99,12 @@ def watch(
 def _quick_lint(vault) -> None:
     """Run a quick lint and print summary."""
     conn = vault.db
-    broken = conn.execute("SELECT COUNT(*) as c FROM links WHERE target_id IS NULL").fetchone()["c"]
-    orphans = conn.execute("""
+    broken = conn.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL").fetchone()["c"]
+    orphans = conn.execute(f"""
         SELECT COUNT(*) as c FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
     """).fetchone()["c"]
     if broken or orphans:
         parts = []

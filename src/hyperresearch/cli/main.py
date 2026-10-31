@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from hyperresearch.cli._output import console, output, print_vault_status
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -72,15 +73,15 @@ def status(
     ):
         top_tags.append({"tag": row["tag"], "count": row["c"]})
 
-    total_links = conn.execute("SELECT COUNT(*) as c FROM links").fetchone()["c"]
+    total_links = conn.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL})").fetchone()["c"]
     broken = conn.execute(
-        "SELECT COUNT(*) as c FROM links WHERE target_id IS NULL"
+        f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL"
     ).fetchone()["c"]
-    orphans = conn.execute("""
+    orphans = conn.execute(f"""
         SELECT COUNT(*) as c FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
     """).fetchone()["c"]
 
     total_words = conn.execute(

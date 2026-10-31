@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -29,7 +30,7 @@ def embed_sync_cmd(
         if json_output:
             output(error(str(e), "NO_VAULT"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
         raise typer.Exit(1)
 
     vault.auto_sync()
@@ -39,7 +40,7 @@ def embed_sync_cmd(
         if json_output:
             output(error(str(e), "EMBEDDINGS_DISABLED"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
         raise typer.Exit(1)
 
     if json_output:
@@ -64,7 +65,7 @@ def embed_status(
         if json_output:
             output(error(str(e), "NO_VAULT"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
         raise typer.Exit(1)
 
     conn = vault.db
