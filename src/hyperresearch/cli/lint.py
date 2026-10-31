@@ -11,7 +11,7 @@ from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.core.hooks import SCAFFOLD_ONLY_SECTION_HEADERS
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer(invoke_without_command=True)
 
@@ -252,6 +252,15 @@ def lint(
     """Health-check the vault."""
     if ctx.invoked_subcommand is not None:
         return
+
+    # An unknown name would run no rule and report a healthy vault.
+    if rule is not None and rule not in RULES:
+        msg = f"Unknown lint rule '{rule}'. Valid rules: {', '.join(RULES)}"
+        if json_output:
+            output(error(msg, "UNKNOWN_RULE"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {escape(msg)}")
+        raise typer.Exit(1)
 
     from hyperresearch.core.vault import Vault
 
