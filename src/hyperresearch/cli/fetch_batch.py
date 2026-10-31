@@ -38,8 +38,10 @@ def fetch_batch(
     )
     from hyperresearch.core.scholar import extract_doi
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
+    from hyperresearch.cli.fetch import _escalate_blocked, _junk_escalation_reason
     from hyperresearch.core.vault import Vault, VaultError
     from hyperresearch.web.base import get_provider
+    from hyperresearch.web.pdf import PDF_FAILURE_KEY
 
     # Collect URLs from args and/or stdin
     all_urls = list(urls or [])
@@ -167,10 +169,26 @@ def fetch_batch(
     # a whole cluster of papers at once.
     pending = []  # (url, result, oa_location, rescue_reason)
     blocked = [(f["url"], f"fetch failed: {f['error']}", None) for f in failed_urls]
+    # url -> (failed_urls phase, escalation reason or None, error) for a result
+    # one of cli/fetch.py's gates refused. A fetch that raised is in
+    # failed_urls already, so it has no entry here.
+    refusals: dict[str, tuple[str, str | None, str]] = {}
 
     for url, result in results:
+        # The gates cli/fetch.py applies, in the same order.
         if result.looks_like_login_wall(url, vault.config.junk):
-            blocked.append((url, f"login wall: {result.title}", result.raw_html))
+            reason = f"login wall: {result.title}"
+            blocked.append((url, reason, result.raw_html))
+            refusals[url] = ("auth", "login_wall", reason)
+            continue
+        junk_reason = result.looks_like_junk(vault.config.junk)
+        if junk_reason:
+            blocked.append((url, junk_reason, result.raw_html))
+            # A PDF that failed its own lane lands here as binary garbage; say
+            # why the PDF lane declined it, as cli/fetch.py does (#82).
+            pdf_failure = result.metadata.get(PDF_FAILURE_KEY)
+            error_text = f"{junk_reason}. PDF lane: {pdf_failure}" if pdf_failure else junk_reason
+            refusals[url] = ("junk", _junk_escalation_reason(junk_reason), error_text)
             continue
         pending.append((url, result, None, None))
 
@@ -180,11 +198,27 @@ def fetch_batch(
         # trusting.
         rescued, loc = rescue_full_text(vault, prov, burl, extract_doi(burl, raw_html, None))
         if rescued is None:
-            if raw_html is not None and not json_output:
-                console.print(
-                    f"  [yellow]Auth required:[/] {burl} — login page detected, skipping. "
-                    "Run 'hyperresearch setup' to create a login profile."
+            refusal = refusals.get(burl)
+            if refusal is None:
+                continue
+            # Lost to a gate: report it and queue it for the browser lane, as
+            # cli/fetch.py does, instead of dropping it.
+            phase, escalation_reason, error_text = refusal
+            item_id = None
+            if escalation_reason:
+                item_id = _escalate_blocked(
+                    vault, burl, escalation_reason, tags, [], None, detail=reason
                 )
+            queued = f" Queued for browser-lane escalation (#{item_id})." if item_id else ""
+            failed_urls.append({"url": burl, "error": error_text + "." + queued, "phase": phase})
+            if not json_output:
+                if phase == "auth":
+                    console.print(
+                        f"  [yellow]Auth required:[/] {burl}: login page detected, skipping. "
+                        f"Run 'hyperresearch setup' to create a login profile.{queued}"
+                    )
+                else:
+                    console.print(f"  [yellow]Skipped:[/] {burl}: {error_text}.{queued}")
             continue
         pending.append((burl, rescued, loc, reason))
         rescued_urls.add(burl)

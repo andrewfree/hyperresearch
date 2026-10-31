@@ -28,7 +28,7 @@ class _FakeProvider:
     def fetch(self, url):
         if "bad" in url:
             raise RuntimeError("per-url boom")
-        return WebResult(url=url, title="Good Page", content="hello world from the good page")
+        return WebResult(url=url, title="Good Page", content="hello world from the good page. " * 12)
 
 
 @pytest.fixture

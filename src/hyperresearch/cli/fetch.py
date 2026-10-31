@@ -382,9 +382,6 @@ def fetch(
             raise typer.Exit(1)
 
     # Detect junk pages — captcha, error pages, binary garbage, empty content.
-    # Bot-detection junk (Cloudflare/captcha walls) escalates to the browser
-    # lane; content-quality junk (error pages, empty content) does not — a
-    # 404 in Chrome is still a 404.
     junk_reason = result.looks_like_junk(vault.config.junk) if oa_location is None else None
     if junk_reason:
         rescued = _rescue(junk_reason, result.raw_html)
@@ -392,8 +389,8 @@ def fetch(
             result = rescued
         else:
             item_id = None
-            if junk_reason.startswith("Bot detection"):
-                reason = "captcha" if "captcha" in junk_reason.lower() else "bot_block"
+            reason = _junk_escalation_reason(junk_reason)
+            if reason:
                 item_id = _escalate_blocked(vault, url, reason, tags, suggested_by, utility_score,
                                             detail=junk_reason)
             escalated = f" Queued for browser-lane escalation (#{item_id})." if item_id else ""
@@ -667,6 +664,18 @@ def fetch(
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
             console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{note_id}/")
+
+
+def _junk_escalation_reason(junk_reason: str) -> str | None:
+    """The escalation reason for a junk verdict, or None when it is not escalated.
+
+    Bot-detection junk (Cloudflare/captcha walls) escalates to the browser
+    lane; content-quality junk (error pages, empty content) does not: a 404
+    in Chrome is still a 404. Shared with fetch-batch so the two agree.
+    """
+    if not junk_reason.startswith("Bot detection"):
+        return None
+    return "captcha" if "captcha" in junk_reason.lower() else "bot_block"
 
 
 def _escalate_blocked(
