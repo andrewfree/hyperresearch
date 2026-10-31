@@ -878,6 +878,8 @@ def _resolve_links_incremental(conn, changed_ids: set[str]) -> None:
 
 def _resolve_null_links(conn) -> None:
     """Resolve all links with target_id = NULL."""
+    # SQLite LOWER only folds ASCII; Python handles Unicode case mappings.
+    conn.create_function("casefold", 1, lambda value: value.casefold() if value is not None else None, deterministic=True)
     # Exact ID match
     conn.execute("""
         UPDATE links SET target_id = (
@@ -888,7 +890,7 @@ def _resolve_null_links(conn) -> None:
     # Case-insensitive ID match
     conn.execute("""
         UPDATE links SET target_id = (
-            SELECT n.id FROM notes n WHERE LOWER(n.id) = LOWER(links.target_ref) LIMIT 1
+            SELECT n.id FROM notes n WHERE casefold(n.id) = casefold(links.target_ref) LIMIT 1
         )
         WHERE target_id IS NULL
     """)
@@ -896,7 +898,7 @@ def _resolve_null_links(conn) -> None:
     conn.execute("""
         UPDATE links SET target_id = (
             SELECT a.note_id FROM aliases a
-            WHERE LOWER(a.alias) = LOWER(links.target_ref)
+            WHERE casefold(a.alias) = casefold(links.target_ref)
             LIMIT 1
         )
         WHERE target_id IS NULL
@@ -904,7 +906,7 @@ def _resolve_null_links(conn) -> None:
     # Title match
     conn.execute("""
         UPDATE links SET target_id = (
-            SELECT n.id FROM notes n WHERE LOWER(n.title) = LOWER(links.target_ref) LIMIT 1
+            SELECT n.id FROM notes n WHERE casefold(n.title) = casefold(links.target_ref) LIMIT 1
         )
         WHERE target_id IS NULL
     """)
