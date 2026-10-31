@@ -9,6 +9,7 @@ import typer
 from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
+from hyperresearch.core.db import parent_subtree_clause
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -92,9 +93,9 @@ def export_vault(
         clauses.append("n.status = ?")
         params.append(status)
     if parent:
-        clauses.append("(n.parent = ? OR n.parent LIKE ?)")
-        params.append(parent)
-        params.append(parent + "/%")
+        clause, parent_params = parent_subtree_clause(parent)
+        clauses.append(clause)
+        params.extend(parent_params)
 
     where = " AND ".join(clauses)
     rows = vault.db.execute(f"SELECT id, path, title FROM notes n WHERE {where}", params).fetchall()

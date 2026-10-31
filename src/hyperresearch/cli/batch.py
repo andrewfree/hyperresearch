@@ -9,6 +9,7 @@ import typer
 from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
+from hyperresearch.core.db import parent_subtree_clause
 from hyperresearch.models.output import Envelope, error, success
 
 VALID_STATUSES = {"draft", "review", "evergreen", "stale", "deprecated", "archive"}
@@ -41,9 +42,9 @@ def _get_matching_notes(vault, status=None, tag=None, parent=None, note_type=Non
         clauses.append("n.id IN (SELECT note_id FROM tags WHERE tag = ?)")
         params.append(tag.lower())
     if parent:
-        clauses.append("(n.parent = ? OR n.parent LIKE ?)")
-        params.append(parent)
-        params.append(parent + "/%")
+        clause, parent_params = parent_subtree_clause(parent)
+        clauses.append(clause)
+        params.extend(parent_params)
     if note_type:
         clauses.append("n.type = ?")
         params.append(note_type)
