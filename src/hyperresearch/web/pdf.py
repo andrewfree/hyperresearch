@@ -36,7 +36,12 @@ def is_pdf_url(url: str) -> bool:
     """Check if URL likely points to a PDF."""
     from urllib.parse import urlparse
 
-    parsed = urlparse(url.lower())
+    try:
+        parsed = urlparse(url.lower())
+    except ValueError:
+        # Unparseable (an unbalanced IPv6 bracket): not a PDF URL, and the
+        # SSRF gate refuses it with a clear message.
+        return False
     path = parsed.path
     # Direct .pdf links
     if path.endswith(".pdf"):

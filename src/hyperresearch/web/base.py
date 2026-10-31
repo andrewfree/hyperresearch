@@ -65,6 +65,11 @@ class WebResult:
     screenshot: bytes | None = None  # PNG screenshot of the rendered page
     raw_bytes: bytes | None = None  # Raw file bytes (PDF, etc.)
     raw_content_type: str | None = None  # MIME type of raw file (application/pdf, etc.)
+    # The input URL this result answers, set by fetch_many: its results come
+    # back in completion order and `url` may be a redirect or PDF-lane target,
+    # so neither position nor `url` says which input a result belongs to.
+    # None means `url` is the requested URL.
+    requested_url: str | None = None
 
     @property
     def domain(self) -> str:
@@ -161,6 +166,23 @@ class WebResult:
                 return "Cookie/boilerplate page"
 
         return None
+
+
+class BatchResults(list):
+    """What ``fetch_many`` returns: the WebResults it got, and what it lost.
+
+    A list of the results, so callers that only iterate them are unaffected.
+    ``failures`` holds one ``{"url", "error"}`` per input URL that produced no
+    result. A bare list has no room for that, and a batch caller handed a
+    short list cannot tell which URLs were lost or why.
+    """
+
+    def __init__(self, results=(), failures: list[dict] | None = None):
+        super().__init__(results)
+        self.failures: list[dict] = list(failures or [])
+
+    def fail(self, url: str, error: str) -> None:
+        self.failures.append({"url": url, "error": error})
 
 
 @runtime_checkable
