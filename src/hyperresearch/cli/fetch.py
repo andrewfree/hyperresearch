@@ -499,38 +499,10 @@ def fetch(
     )
 
     # Save raw file (PDF, etc.) if present
-    raw_file_path = None
-    if result.raw_bytes and result.raw_content_type:
-        ext_map = {
-            "application/pdf": ".pdf",
-            "image/png": ".png",
-            "image/jpeg": ".jpg",
-            "image/gif": ".gif",
-            "image/webp": ".webp",
-        }
-        ext = ext_map.get(result.raw_content_type, "")
-        if ext:
-            raw_dir = vault.root / "research" / "raw"
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            raw_filename = note_path.stem + ext
-            raw_file = raw_dir / raw_filename
-            raw_file.write_bytes(result.raw_bytes)
-            raw_file_path = f"raw/{raw_filename}"
+    raw_file_path = _save_raw_file(vault, note_path, result)
 
     # Note: tagging and summarization is the agent's job, not an automatic process.
     # The agent reads the fetched content and writes meaningful summaries and tags.
-
-    # Persist raw_file reference on the note via NoteMeta — this guarantees the
-    # field survives any future re-serialization (repair, note update, etc.).
-    # The text-injection approach used previously was silently dropped by
-    # NoteMeta.model_config = {"extra": "ignore"} on the next parse.
-    if raw_file_path:
-        from hyperresearch.core.frontmatter import parse_frontmatter, render_note
-        note_text = note_path.read_text(encoding="utf-8")
-        meta, body = parse_frontmatter(note_text)
-        if meta.raw_file != raw_file_path:
-            meta.raw_file = raw_file_path
-            note_path.write_text(render_note(meta, body), encoding="utf-8")
 
     # Sync first so the note exists in the notes table (needed for FK on sources/assets)
     note_id = note_path.stem
@@ -664,6 +636,45 @@ def fetch(
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
             console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{note_id}/")
+
+
+def _save_raw_file(vault, note_path: Path, result) -> str | None:
+    """Save ``result``'s raw bytes (PDF, etc.) as research/raw/<note-id>.<ext>.
+
+    Records the file as the note's ``raw_file:`` and returns that path
+    (relative to research/), or None when there is nothing of a kept type to
+    save. Shared with fetch-batch so a batch note keeps its PDF too.
+    """
+    if not (result.raw_bytes and result.raw_content_type):
+        return None
+    ext_map = {
+        "application/pdf": ".pdf",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+    }
+    ext = ext_map.get(result.raw_content_type, "")
+    if not ext:
+        return None
+    raw_dir = vault.root / "research" / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_filename = note_path.stem + ext
+    raw_file = raw_dir / raw_filename
+    raw_file.write_bytes(result.raw_bytes)
+    raw_file_path = f"raw/{raw_filename}"
+
+    # Persist raw_file reference on the note via NoteMeta — this guarantees the
+    # field survives any future re-serialization (repair, note update, etc.).
+    # The text-injection approach used previously was silently dropped by
+    # NoteMeta.model_config = {"extra": "ignore"} on the next parse.
+    from hyperresearch.core.frontmatter import parse_frontmatter, render_note
+    note_text = note_path.read_text(encoding="utf-8")
+    meta, body = parse_frontmatter(note_text)
+    if meta.raw_file != raw_file_path:
+        meta.raw_file = raw_file_path
+        note_path.write_text(render_note(meta, body), encoding="utf-8")
+    return raw_file_path
 
 
 def _junk_escalation_reason(junk_reason: str) -> str | None:
