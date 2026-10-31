@@ -7,7 +7,7 @@ import math
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -18,9 +18,8 @@ def config_show(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Display current vault configuration."""
-    from hyperresearch.core.vault import Vault
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     config = vault.config
 
     data = {
@@ -51,9 +50,8 @@ def config_set(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Set a configuration value."""
-    from hyperresearch.core.vault import Vault
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     config = vault.config
 
     # Map dot-notation keys to config attributes
@@ -110,9 +108,8 @@ def config_get(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Get a configuration value."""
-    from hyperresearch.core.vault import Vault
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     config = vault.config
 
     key_map = {
@@ -148,9 +145,8 @@ def config_agent_docs(
     from hyperresearch.core.agent_docs import inject_agent_docs
     from hyperresearch.core.hooks import installed_platforms
     from hyperresearch.core.platforms import paths_for
-    from hyperresearch.core.vault import Vault
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     # Only the runtimes the project was installed for: a Codex-only project
     # must not gain a CLAUDE.md. Neither installed means Claude Code, the
     # default target.

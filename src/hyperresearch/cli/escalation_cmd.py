@@ -168,7 +168,14 @@ def escalation_ingest(
     if item["status"] != "in_progress":
         _refuse_unclaimed(item, json_output)
 
-    body = Path(body_file).read_text(encoding="utf-8-sig")
+    try:
+        body = Path(body_file).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        if json_output:
+            output(error(str(e), "ESCALATION_ERROR"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {escape(str(e))}")
+        raise typer.Exit(1) from e
     url = item["url"]
     domain = urlparse(url).netloc
     now = datetime.now(UTC)

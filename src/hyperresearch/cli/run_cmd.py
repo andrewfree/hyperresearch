@@ -58,9 +58,9 @@ def run_init(
 
     vault = _vault_or_exit(json_output)
     query = None
-    if query_file:
-        query = Path(query_file).read_text(encoding="utf-8-sig")
     try:
+        if query_file:
+            query = Path(query_file).read_text(encoding="utf-8-sig")
         manifest = init_run(
             vault,
             vault_tag,
@@ -70,7 +70,7 @@ def run_init(
             max_sources=max_sources,
             max_notes=max_notes,
         )
-    except (RunError, VaultError) as e:
+    except (RunError, VaultError, OSError, UnicodeDecodeError) as e:
         if json_output:
             output(error(str(e), "RUN_ERROR"), json_mode=True)
         else:
@@ -188,24 +188,12 @@ def run_resume(
 ) -> None:
     """Print the exact position a recovering orchestrator should continue from."""
     from hyperresearch.core.hooks import step_skill_slug
-    from hyperresearch.core.runs import (
-        RunError,
-        clear_count_block,
-        load_manifest,
-        run_resume_position,
-        set_status,
-    )
+    from hyperresearch.core.runs import RunError, resume_run, run_resume_position
 
     vault = _vault_or_exit(json_output)
     tag = _resolve_tag(vault, vault_tag, json_output)
     try:
-        manifest = load_manifest(vault, tag)
-        if manifest["status"] == "blocked" and manifest.get("blocked_on") in (
-            "max_sources", "max_notes"
-        ):
-            manifest = clear_count_block(vault, tag)
-        elif manifest["status"] in ("paused", "blocked", "failed"):
-            manifest = set_status(vault, tag, "running")
+        manifest = resume_run(vault, tag)
         position = run_resume_position(vault, manifest)
         run_dir = str(vault.run_dir(tag))
     except (RunError, VaultError) as e:
@@ -534,8 +522,8 @@ def run_report(
         for step in report["steps"]:
             console.print(f"  step {step['step']:>4}: {step['status']:<8} {step['minutes']} min")
         spend = report["spend"]
-        console.print(f"  API-equiv spend: ~${spend['estimated_usd']} | {spend['sources_fetched']} sources | "
-                      f"{spend['agents_spawned']} agents | {spend['notes_written']} notes")
+        console.print(f"  API-equiv spend: ~${spend.get('estimated_usd', 0.0)} | {spend.get('sources_fetched', 0)} sources | "
+                      f"{spend.get('agents_spawned', 0)} agents | {spend.get('notes_written', 0)} notes")
         ev = report["events"]
         if ev:
             console.print(f"  events: {ev}")
