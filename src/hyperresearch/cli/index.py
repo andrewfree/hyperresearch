@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import typer
 
-from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import success
+from hyperresearch.cli._output import console, discover_vault, output
+from hyperresearch.models.output import error, success
 
 app = typer.Typer()
 
@@ -16,10 +16,9 @@ def index_build(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Regenerate all index pages."""
-    from hyperresearch.core.vault import Vault
     from hyperresearch.indexgen.generator import IndexGenerator
 
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
     gen = IndexGenerator(vault)
     built = gen.build_all()
@@ -37,9 +36,7 @@ def index_list(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show which index pages exist."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     index_dir = vault.index_dir
     pages = sorted(p.name for p in index_dir.glob("*.md")) if index_dir.exists() else []
 
@@ -59,13 +56,14 @@ def index_show(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Display a specific index page."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     fname = name if name.endswith(".md") else f"{name}.md"
     path = vault.index_dir / fname
     if not path.exists():
-        console.print(f"[red]Index page not found:[/] {fname}")
+        if json_output:
+            output(error(f"Index page not found: {fname}", "NOT_FOUND"), json_mode=True)
+        else:
+            console.print(f"[red]Index page not found:[/] {fname}")
         raise typer.Exit(1)
 
     content = path.read_text(encoding="utf-8")

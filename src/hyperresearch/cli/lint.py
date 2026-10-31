@@ -9,7 +9,7 @@ from datetime import UTC
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.core.hooks import SCAFFOLD_ONLY_SECTION_HEADERS
 from hyperresearch.models.output import error, success
 
@@ -261,9 +261,7 @@ def lint(
             console.print(f"[red]Error:[/] {escape(msg)}")
         raise typer.Exit(1)
 
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
     conn = vault.db
 
