@@ -11,7 +11,7 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from hyperresearch.serve.renderer import render_markdown
+from hyperresearch.serve.renderer import path_href, render_markdown
 
 # BSD-derived stacks (macOS included) let a SO_REUSEADDR bind to a specific
 # address succeed beside another socket's wildcard bind on the same port.
@@ -343,7 +343,7 @@ GRAPH_JS = """
   });
   canvas.addEventListener('mouseup', function() { mouseDown = false; });
   canvas.addEventListener('click', function() {
-    if (hoverNode) window.location.href = '/note/' + hoverNode.id;
+    if (hoverNode) window.location.href = '/note/' + encodeURIComponent(hoverNode.id);
   });
 
   searchBox.addEventListener('input', function() { searchTerm = this.value; draw(); });
@@ -450,7 +450,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             "ORDER BY COALESCE(updated, created) DESC LIMIT 15"
         ).fetchall()
         for r in rows:
-            lines.append(f'<a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>')
+            lines.append(f'<a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>')
         lines.append('</div>')
         lines.append(
             '<div class="nav-bottom">'
@@ -474,7 +474,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         body = "<h1>All Notes</h1>\n<ul>\n"
         for r in rows:
             summary = f' <span style="color:var(--fg-dim);font-size:0.85rem">-- {html_mod.escape(r["summary"] or "")}</span>' if r["summary"] else ""
-            body += f'<li><a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
+            body += f'<li><a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
         body += "</ul>"
         self._send(200, body, "Home")
 
@@ -502,7 +502,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         first_line = next((line for line in row["body"].splitlines() if line.strip()), "")
         if not re.match(r"#\s+\S", first_line):
             html_body = f"<h1>{html_mod.escape(row['title'])}</h1>\n{html_body}"
-        tags_html = " ".join(f'<a href="/tag/{html_mod.escape(t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
+        tags_html = " ".join(f'<a href="{path_href("/tag/", t)}" class="tag">{html_mod.escape(t)}</a>' for t in tags)
         status_class = row["status"]
         meta = (
             f'<div class="meta">'
@@ -514,7 +514,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         bl_html = ""
         if backlinks:
             bl_items = "\n".join(
-                f'<li><a href="/note/{html_mod.escape(r["source_id"])}">{html_mod.escape(r["title"])}</a></li>' for r in backlinks
+                f'<li><a href="{path_href("/note/", r["source_id"])}">{html_mod.escape(r["title"])}</a></li>' for r in backlinks
             )
             bl_html = f'<div class="backlinks"><h3>Backlinks</h3><ul>{bl_items}</ul></div>'
         self._send(200, f"{meta}\n{html_body}\n{bl_html}", html_mod.escape(row["title"]))
@@ -529,7 +529,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         body = f"<h1>Tag: {safe_tag}</h1>\n<p>{len(rows)} notes</p>\n<ul>\n"
         for r in rows:
             summary = f' <span style="color:var(--fg-dim);font-size:0.85rem">-- {html_mod.escape(r["summary"] or "")}</span>' if r["summary"] else ""
-            body += f'<li><a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
+            body += f'<li><a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a>{summary}</li>\n'
         body += "</ul>"
         self._send(200, body, f"Tag: {safe_tag}")
 
@@ -539,7 +539,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
         ).fetchall()
         body = "<h1>All Tags</h1>\n<ul>\n"
         for r in rows:
-            body += f'<li><a href="/tag/{html_mod.escape(r["tag"])}">{html_mod.escape(r["tag"])}</a> ({r["c"]})</li>\n'
+            body += f'<li><a href="{path_href("/tag/", r["tag"])}">{html_mod.escape(r["tag"])}</a> ({r["c"]})</li>\n'
         body += "</ul>"
         self._send(200, body, "Tags")
 
@@ -573,7 +573,7 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             )
             body += (
                 f'<div class="result"><div class="title">'
-                f'<a href="/note/{html_mod.escape(r["id"])}">{html_mod.escape(r["title"])}</a></div>'
+                f'<a href="{path_href("/note/", r["id"])}">{html_mod.escape(r["title"])}</a></div>'
                 f'<div class="snippet">{snippet}</div></div>\n'
             )
         body += "</div>"
