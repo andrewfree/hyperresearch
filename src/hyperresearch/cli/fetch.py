@@ -213,15 +213,18 @@ def fetch(
     provider_name: str | None = typer.Option(None, "--provider", help="Web provider override"),
     save_assets: bool = typer.Option(False, "--save-assets", "-a", help="Download images and screenshot"),
     visible: bool = typer.Option(False, "--visible", "-V", help="Run browser visibly (for stubborn auth sites)"),
+    # Help text is Rich markup (rich_markup_mode="rich"), so the inner "[" of
+    # each wiki-link is escaped; unescaped, "[note-id]" was read as a style
+    # tag and the help showed "Suggested by []".
     suggested_by: list[str] = typer.Option(
         [],
         "--suggested-by",
-        help="Source note ID(s) that suggested this URL. Prepends a 'Suggested by [[note-id]]' breadcrumb to the new note's body, which the link extractor picks up as a wiki-link so the fetched note appears in the source's backlinks. Repeat for multiple sources.",
+        help="Source note ID(s) that suggested this URL. Prepends a 'Suggested by [\\[note-id]]' breadcrumb to the new note's body, which the link extractor picks up as a wiki-link so the fetched note appears in the source's backlinks. Repeat for multiple sources.",
     ),
     suggested_by_reason: str | None = typer.Option(
         None,
         "--suggested-by-reason",
-        help="One-line justification for why the suggesting source named this URL. Appears next to the [[source-id]] breadcrumb.",
+        help="One-line justification for why the suggesting source named this URL. Appears next to the [\\[source-id]] breadcrumb.",
     ),
     utility_score: float | None = typer.Option(
         None,
