@@ -155,7 +155,6 @@ class Paper:
 # ---------------------------------------------------------------------------
 
 _DOI_PREFIX_RE = re.compile(r"^(?:https?://)?(?:dx\.)?doi\.org/", re.IGNORECASE)
-_TITLE_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
 
 def normalize_doi(doi: str | None) -> str | None:
@@ -175,10 +174,14 @@ def title_key(title: str) -> str:
     Providers disagree on case, punctuation, LaTeX and trailing periods, so a
     strict comparison never matches. Accents are folded because Crossref and
     OpenAlex disagree on whether to decompose them.
+
+    Letters and digits of every script are kept (str.isalnum). Keeping only
+    ASCII deleted Cyrillic and CJK text, so distinct works such as two
+    Russian COVID-19 papers reduced to the same key and were merged.
     """
     folded = unicodedata.normalize("NFKD", title)
-    ascii_only = "".join(c for c in folded if not unicodedata.combining(c))
-    return _TITLE_STRIP_RE.sub("", ascii_only.lower())
+    no_marks = "".join(c for c in folded if not unicodedata.combining(c))
+    return "".join(c for c in no_marks.casefold() if c.isalnum())
 
 
 # ---------------------------------------------------------------------------

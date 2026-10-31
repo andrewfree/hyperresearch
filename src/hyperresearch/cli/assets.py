@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
 from hyperresearch.models.output import error, success
@@ -65,8 +66,10 @@ def assets_list(
         for a in assets:
             size = f"{a['size_bytes'] / 1024:.0f}KB" if a["size_bytes"] else "?"
             alt = f" — {a['alt_text'][:60]}" if a["alt_text"] else ""
+            # Escaped whole: Rich read "[image]" as a style tag and dropped
+            # it, and filenames and alt text come from fetched pages.
             console.print(
-                f"  [{a['type']}] {a['note_id']}: {a['filename']} ({size}){alt}"
+                escape(f"  [{a['type']}] {a['note_id']}: {a['filename']} ({size}){alt}")
             )
         console.print(f"\n[dim]{len(assets)} assets total[/]")
 
@@ -111,4 +114,4 @@ def asset_path(
         output(success(paths, count=len(paths), vault=str(vault.root)), json_mode=True)
     else:
         for p in paths:
-            console.print(p["path"])
+            console.print(escape(p["path"]))

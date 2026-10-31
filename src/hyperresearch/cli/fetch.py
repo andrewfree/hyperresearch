@@ -34,28 +34,25 @@ SKIP_URL_PATTERNS = (
 
 
 def _append_suggested_by_to_existing(
-    vault_root: Path,
+    vault,
     note_id: str,
     suggested_by: list[str],
     reason: str | None,
-) -> int:
+) -> int | None:
     """Append `*Suggested by [[src]] — reason*` breadcrumb lines to an existing note.
 
     Idempotent: if a breadcrumb for a given source id already exists anywhere
     in the body, it is not re-added. Returns the number of new breadcrumbs
-    actually added.
+    actually added, or None when the note's file cannot be found.
     """
-    # Find the note file — scan research/notes/ for `<note-id>.md` or walk subdirs
     from hyperresearch.core.frontmatter import parse_frontmatter, serialize_frontmatter
 
-    note_path = None
-    for candidate in vault_root.rglob(f"{note_id}.md"):
-        # Require it to be under a notes directory so we don't match index files
-        if "notes" in candidate.parts:
-            note_path = candidate
-            break
-    if note_path is None:
-        return 0
+    # The index knows the note's file. A filename is not its id once the id
+    # was edited (#159), so searching for `<note-id>.md` missed such a note.
+    row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
+    note_path = vault.root / row["path"] if row else None
+    if note_path is None or not note_path.is_file():
+        return None
 
     text = note_path.read_text(encoding="utf-8-sig")
     meta, body = parse_frontmatter(text)
@@ -213,15 +210,18 @@ def fetch(
     provider_name: str | None = typer.Option(None, "--provider", help="Web provider override"),
     save_assets: bool = typer.Option(False, "--save-assets", "-a", help="Download images and screenshot"),
     visible: bool = typer.Option(False, "--visible", "-V", help="Run browser visibly (for stubborn auth sites)"),
+    # Help text is Rich markup (rich_markup_mode="rich"), so the inner "[" of
+    # each wiki-link is escaped; unescaped, "[note-id]" was read as a style
+    # tag and the help showed "Suggested by []".
     suggested_by: list[str] = typer.Option(
         [],
         "--suggested-by",
-        help="Source note ID(s) that suggested this URL. Prepends a 'Suggested by [[note-id]]' breadcrumb to the new note's body, which the link extractor picks up as a wiki-link so the fetched note appears in the source's backlinks. Repeat for multiple sources.",
+        help="Source note ID(s) that suggested this URL. Prepends a 'Suggested by [\\[note-id]]' breadcrumb to the new note's body, which the link extractor picks up as a wiki-link so the fetched note appears in the source's backlinks. Repeat for multiple sources.",
     ),
     suggested_by_reason: str | None = typer.Option(
         None,
         "--suggested-by-reason",
-        help="One-line justification for why the suggesting source named this URL. Appears next to the [[source-id]] breadcrumb.",
+        help="One-line justification for why the suggesting source named this URL. Appears next to the [\\[source-id]] breadcrumb.",
     ),
     utility_score: float | None = typer.Option(
         None,
@@ -234,7 +234,6 @@ def fetch(
     from hyperresearch.core.note import indexed_note_ids, write_note
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
     from hyperresearch.core.vault import Vault, VaultError
-    from hyperresearch.web.base import get_provider
     from hyperresearch.web.pdf import PDF_FAILURE_KEY
 
     try:
@@ -243,7 +242,15 @@ def fetch(
         if json_output:
             output(error(str(e), "NO_VAULT"), json_mode=True)
         else:
-            console.print(f"[red]Error:[/] {e}")
+            console.print(f"[red]Error:[/] {escape(str(e))}")
+        raise typer.Exit(1)
+
+    parse_error = _url_parse_error(url)
+    if parse_error:
+        if json_output:
+            output(error(parse_error, "INVALID_URL"), json_mode=True)
+        else:
+            console.print(f"[red]Invalid URL:[/] {escape(parse_error)}")
         raise typer.Exit(1)
 
     vault.auto_sync()
@@ -261,8 +268,19 @@ def fetch(
         # check for dupes first.
         if suggested_by:
             added = _append_suggested_by_to_existing(
-                vault.root, note_id, suggested_by, suggested_by_reason
+                vault, note_id, suggested_by, suggested_by_reason
             )
+            if added is None:
+                # Not "already present": nothing was written anywhere.
+                msg = (
+                    f"URL already fetched as note '{note_id}', but its file could not "
+                    "be found; no breadcrumb was added. Run 'hyperresearch sync' and retry."
+                )
+                if json_output:
+                    output(error(msg, "NOTE_NOT_FOUND"), json_mode=True)
+                else:
+                    console.print(f"[red]Error:[/] {escape(msg)}")
+                raise typer.Exit(1)
             # Re-sync so the new wiki-link gets picked up by the link extractor
             plan = compute_sync_plan(vault)
             if plan.to_update:
@@ -282,7 +300,7 @@ def fetch(
             if json_output:
                 output(success(data, vault=str(vault.root)), json_mode=True)
             else:
-                console.print(f"[yellow]Already fetched:[/] {url} → note '{note_id}'")
+                console.print(f"[yellow]Already fetched:[/] {escape(url)} → note '{escape(note_id)}'")
                 console.print(f"  added {added} backlink(s) to existing note")
             return
 
@@ -292,7 +310,7 @@ def fetch(
                 json_mode=True,
             )
         else:
-            console.print(f"[yellow]Already fetched:[/] {url} → note '{note_id}'")
+            console.print(f"[yellow]Already fetched:[/] {escape(url)} → note '{escape(note_id)}'")
         raise typer.Exit(1)
 
     # Auto-visible for sites that kill headless sessions on first contact
@@ -304,14 +322,7 @@ def fetch(
             visible = True
 
     # Fetch content
-    prov = get_provider(
-        provider_name or vault.config.web_provider,
-        profile=vault.config.web_profile,
-        magic=vault.config.web_magic,
-        headless=not visible,
-        settings=vault.config.fetch,
-        gates=vault.config.junk,
-    )
+    prov = _load_provider(vault, provider_name, json_output, headless=not visible)
     if not json_output:
         console.print(f"[dim]Fetching with {prov.name}...[/]")
 
@@ -357,7 +368,7 @@ def fetch(
             if json_output:
                 output(error(str(e), "FETCH_ERROR"), json_mode=True)
             else:
-                console.print(f"[red]Fetch failed:[/] {e}")
+                console.print(f"[red]Fetch failed:[/] {escape(str(e))}")
             raise typer.Exit(1)
 
     # Detect login redirects — abort, but ESCALATE to the browser lane
@@ -378,13 +389,10 @@ def fetch(
             if json_output:
                 output(error(msg, "AUTH_REQUIRED_ESCALATED" if item_id else "AUTH_REQUIRED"), json_mode=True)
             else:
-                console.print(f"[red]Auth required:[/] {msg}")
+                console.print(f"[red]Auth required:[/] {escape(msg)}")
             raise typer.Exit(1)
 
     # Detect junk pages — captcha, error pages, binary garbage, empty content.
-    # Bot-detection junk (Cloudflare/captcha walls) escalates to the browser
-    # lane; content-quality junk (error pages, empty content) does not — a
-    # 404 in Chrome is still a 404.
     junk_reason = result.looks_like_junk(vault.config.junk) if oa_location is None else None
     if junk_reason:
         rescued = _rescue(junk_reason, result.raw_html)
@@ -392,8 +400,8 @@ def fetch(
             result = rescued
         else:
             item_id = None
-            if junk_reason.startswith("Bot detection"):
-                reason = "captcha" if "captcha" in junk_reason.lower() else "bot_block"
+            reason = _junk_escalation_reason(junk_reason)
+            if reason:
                 item_id = _escalate_blocked(vault, url, reason, tags, suggested_by, utility_score,
                                             detail=junk_reason)
             escalated = f" Queued for browser-lane escalation (#{item_id})." if item_id else ""
@@ -405,7 +413,7 @@ def fetch(
             if json_output:
                 output(error(msg, "JUNK_ESCALATED" if item_id else "JUNK_CONTENT"), json_mode=True)
             else:
-                console.print(f"[yellow]Skipped:[/] {msg}")
+                console.print(f"[yellow]Skipped:[/] {escape(msg)}")
             raise typer.Exit(1)
 
     # Source-ranking capture: DOI/arXiv id + the orchestrator's utility score.
@@ -502,38 +510,10 @@ def fetch(
     )
 
     # Save raw file (PDF, etc.) if present
-    raw_file_path = None
-    if result.raw_bytes and result.raw_content_type:
-        ext_map = {
-            "application/pdf": ".pdf",
-            "image/png": ".png",
-            "image/jpeg": ".jpg",
-            "image/gif": ".gif",
-            "image/webp": ".webp",
-        }
-        ext = ext_map.get(result.raw_content_type, "")
-        if ext:
-            raw_dir = vault.root / "research" / "raw"
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            raw_filename = note_path.stem + ext
-            raw_file = raw_dir / raw_filename
-            raw_file.write_bytes(result.raw_bytes)
-            raw_file_path = f"raw/{raw_filename}"
+    raw_file_path = _save_raw_file(vault, note_path, result)
 
     # Note: tagging and summarization is the agent's job, not an automatic process.
     # The agent reads the fetched content and writes meaningful summaries and tags.
-
-    # Persist raw_file reference on the note via NoteMeta — this guarantees the
-    # field survives any future re-serialization (repair, note update, etc.).
-    # The text-injection approach used previously was silently dropped by
-    # NoteMeta.model_config = {"extra": "ignore"} on the next parse.
-    if raw_file_path:
-        from hyperresearch.core.frontmatter import parse_frontmatter, render_note
-        note_text = note_path.read_text(encoding="utf-8")
-        meta, body = parse_frontmatter(note_text)
-        if meta.raw_file != raw_file_path:
-            meta.raw_file = raw_file_path
-            note_path.write_text(render_note(meta, body), encoding="utf-8")
 
     # Sync first so the note exists in the notes table (needed for FK on sources/assets)
     note_id = note_path.stem
@@ -646,17 +626,19 @@ def fetch(
     if json_output:
         output(success(data, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Saved:[/] {note_title}")
-        console.print(f"  ID: {note_id}")
-        console.print(f"  Source: {url}")
+        # Titles and URLs come from the page: print them, never parse them
+        # as Rich markup (a "[/x]" in a title raised MarkupError).
+        console.print(f"[green]Saved:[/] {escape(note_title)}")
+        console.print(f"  ID: {escape(note_id)}")
+        console.print(f"  Source: {escape(url)}")
         if oa_location is not None:
             console.print(
-                f"  [cyan]Body from:[/] {oa_location.url} "
+                f"  [cyan]Body from:[/] {escape(oa_location.url)} "
                 f"([bold]{oa_location.version or 'version unknown'}[/], via {oa_location.resolver})"
             )
             if rescue_reason:
                 console.print(
-                    f"  [yellow]Source was never read[/] ({rescue_reason}) — this whole "
+                    f"  [yellow]Source was never read[/] ({escape(rescue_reason)}) — this whole "
                     "note, title and authors included, is the open-access copy."
                 )
             if not oa_location.is_version_of_record:
@@ -666,7 +648,100 @@ def fetch(
                 )
         console.print(f"  Words: {data['word_count']}")
         if saved_assets:
-            console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{note_id}/")
+            console.print(f"  Assets: {len(saved_assets)} saved to research/assets/{escape(note_id)}/")
+
+
+def _load_provider(vault, provider_name: str | None, json_output: bool, headless: bool = True):
+    """get_provider with the vault's settings, for a CLI command.
+
+    A provider that cannot load raises from get_provider: ValueError for an
+    unknown name, RuntimeError for a missing API key, ImportError for a
+    missing extra. Uncaught, that was a traceback and an empty stdout under
+    --json; this answers with the error envelope and exits 1 instead.
+    """
+    from hyperresearch.web.base import get_provider
+
+    try:
+        return get_provider(
+            provider_name or vault.config.web_provider,
+            profile=vault.config.web_profile,
+            magic=vault.config.web_magic,
+            headless=headless,
+            settings=vault.config.fetch,
+            gates=vault.config.junk,
+        )
+    except (ValueError, RuntimeError, ImportError) as exc:
+        code = "BAD_PROVIDER" if isinstance(exc, ValueError) else "PROVIDER_UNAVAILABLE"
+        if json_output:
+            output(error(str(exc), code), json_mode=True)
+        else:
+            console.print(f"[red]Provider unavailable:[/] {escape(str(exc))}")
+        raise typer.Exit(1)
+
+
+def _url_parse_error(url: str) -> str | None:
+    """Why urlparse rejects ``url``, or None when it parses.
+
+    urlparse raises ValueError for some malformed netlocs (an unbalanced IPv6
+    bracket gives "Invalid IPv6 URL"). Several fetch steps parse the URL
+    outside any handler, so such a URL is refused before any of them runs.
+    """
+    try:
+        urlparse(url)
+    except ValueError as exc:
+        return f"cannot parse URL {url!r}: {exc}"
+    return None
+
+
+def _save_raw_file(vault, note_path: Path, result) -> str | None:
+    """Save ``result``'s raw bytes (PDF, etc.) as research/raw/<note-id>.<ext>.
+
+    Records the file as the note's ``raw_file:`` and returns that path
+    (relative to research/), or None when there is nothing of a kept type to
+    save. Shared with fetch-batch so a batch note keeps its PDF too.
+    """
+    if not (result.raw_bytes and result.raw_content_type):
+        return None
+    ext_map = {
+        "application/pdf": ".pdf",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+    }
+    ext = ext_map.get(result.raw_content_type, "")
+    if not ext:
+        return None
+    raw_dir = vault.root / "research" / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    raw_filename = note_path.stem + ext
+    raw_file = raw_dir / raw_filename
+    raw_file.write_bytes(result.raw_bytes)
+    raw_file_path = f"raw/{raw_filename}"
+
+    # Persist raw_file reference on the note via NoteMeta — this guarantees the
+    # field survives any future re-serialization (repair, note update, etc.).
+    # The text-injection approach used previously was silently dropped by
+    # NoteMeta.model_config = {"extra": "ignore"} on the next parse.
+    from hyperresearch.core.frontmatter import parse_frontmatter, render_note
+    note_text = note_path.read_text(encoding="utf-8")
+    meta, body = parse_frontmatter(note_text)
+    if meta.raw_file != raw_file_path:
+        meta.raw_file = raw_file_path
+        note_path.write_text(render_note(meta, body), encoding="utf-8")
+    return raw_file_path
+
+
+def _junk_escalation_reason(junk_reason: str) -> str | None:
+    """The escalation reason for a junk verdict, or None when it is not escalated.
+
+    Bot-detection junk (Cloudflare/captcha walls) escalates to the browser
+    lane; content-quality junk (error pages, empty content) does not: a 404
+    in Chrome is still a 404. Shared with fetch-batch so the two agree.
+    """
+    if not junk_reason.startswith("Bot detection"):
+        return None
+    return "captcha" if "captcha" in junk_reason.lower() else "bot_block"
 
 
 def _escalate_blocked(
@@ -807,7 +882,7 @@ def _download_image(
         # it must be visible, unlike routine 404s and timeouts below. Printed
         # to stderr: this helper has no json_output flag, and stdout must stay
         # pure JSON in --json mode.
-        err_console.print(f"  [yellow]Image refused by fetch gate:[/] {img_url} — {exc}")
+        err_console.print(f"  [yellow]Image refused by fetch gate:[/] {escape(img_url)} — {escape(str(exc))}")
         return None
     except Exception:
         return None
