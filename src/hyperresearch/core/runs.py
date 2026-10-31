@@ -22,10 +22,17 @@ vault. Final reports ship to `research/notes/final_report_<vault_tag>.md`.
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 import sqlite3
+import sys
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, TypeVar, cast
 
 MANIFEST_VERSION = 1
 MANIFEST_NAME = "run.json"
@@ -94,6 +101,94 @@ def manifest_path(vault, vault_tag: str) -> Path:
     return vault.run_dir(vault_tag) / MANIFEST_NAME
 
 
+LOCK_NAME = "run.lock"
+
+if sys.platform == "win32":
+    import errno
+    import msvcrt
+
+    def _lock_file(fd: int) -> None:
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                return
+            except OSError as e:
+                # LK_LOCK gives up after about 10 s of retries; keep waiting,
+                # as flock does, rather than failing a writer that is queued.
+                if e.errno != errno.EDEADLOCK:
+                    raise
+
+    def _unlock_file(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+# Runs whose lock this thread holds, with the nesting depth.
+_held_locks = threading.local()
+
+
+@contextmanager
+def manifest_lock(vault, vault_tag: str) -> Iterator[None]:
+    """Hold the run's exclusive lock across a manifest read-modify-write.
+
+    Parallel `run step` / `run event` calls (a dissertation run keeps several
+    chapters in flight) each load run.json, change it and save it; without
+    the lock the last save silently drops the others' updates. The lock is
+    an OS file lock on run.lock, because run.json itself is swapped by
+    os.replace on every save. It is re-entrant per thread: set_step calls
+    record_event and reconcile_spend_from_disk, which lock the same run.
+    """
+    run_dir = vault.run_dir(vault_tag)
+    key = str(run_dir)
+    held: dict[str, int] = getattr(_held_locks, "depth", None) or {}
+    _held_locks.depth = held
+    if held.get(key):
+        held[key] += 1
+        try:
+            yield
+        finally:
+            held[key] -= 1
+        return
+    if not run_dir.is_dir():
+        raise RunError(f"no run '{vault_tag}' (missing {run_dir / MANIFEST_NAME})")
+    try:
+        fd = os.open(run_dir / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        raise RunError(f"cannot lock run '{vault_tag}': {e}") from e
+    try:
+        _lock_file(fd)
+        held[key] = 1
+        try:
+            yield
+        finally:
+            del held[key]
+            _unlock_file(fd)
+    finally:
+        os.close(fd)
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _locked(fn: _F) -> _F:
+    """Run `fn(vault, vault_tag, ...)` holding that run's manifest_lock."""
+
+    @functools.wraps(fn)
+    def wrapper(vault: Any, vault_tag: str, *args: Any, **kwargs: Any) -> Any:
+        with manifest_lock(vault, vault_tag):
+            return fn(vault, vault_tag, *args, **kwargs)
+
+    return cast(_F, wrapper)
+
+
 def init_run(
     vault,
     vault_tag: str,
@@ -128,9 +223,6 @@ def init_run(
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "temp").mkdir(exist_ok=True)
 
-    if query is not None:
-        (run_dir / "query.md").write_text(query, encoding="utf-8")
-
     now = _now()
     manifest = {
         "manifest_version": MANIFEST_VERSION,
@@ -155,7 +247,14 @@ def init_run(
             "agents_spawned": 0,
         },
     }
-    _save(vault, vault_tag, manifest)
+    with manifest_lock(vault, vault_tag):
+        # A parallel init may have written the manifest since the check above;
+        # overwriting it would drop whatever was recorded in between.
+        if mpath.exists():
+            return load_manifest(vault, vault_tag)
+        if query is not None:
+            (run_dir / "query.md").write_text(query, encoding="utf-8")
+        _save(vault, vault_tag, manifest)
     return manifest
 
 
@@ -194,11 +293,18 @@ def load_manifest(vault, vault_tag: str) -> dict:
 def _save(vault, vault_tag: str, manifest: dict) -> None:
     manifest["updated_at"] = _now()
     mpath = manifest_path(vault, vault_tag)
-    tmp = mpath.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(mpath)  # atomic on same filesystem
+    # One temp file per writer: with a shared run.json.tmp, one writer's
+    # replace() could move another's file away and crash it.
+    tmp = mpath.with_name(f"{MANIFEST_NAME}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(mpath)  # atomic on same filesystem
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
+@_locked
 def record_event(vault, vault_tag: str, event: dict) -> None:
     """Append one event to events.jsonl and touch updated_at for stall detection.
 
@@ -259,6 +365,7 @@ def _fold_chapter_plan(manifest: dict, event: dict) -> None:
         ch["title"] = title.strip()[:CHAPTER_TITLE_MAX_CHARS]
 
 
+@_locked
 def set_step(
     vault,
     vault_tag: str,
@@ -320,6 +427,7 @@ def set_step(
     return manifest
 
 
+@_locked
 def add_spend(
     vault,
     vault_tag: str,
@@ -378,6 +486,7 @@ def _count_notes_and_sources(vault, vault_tag: str) -> tuple[int, int]:
     return notes, sources
 
 
+@_locked
 def clear_count_block(vault, vault_tag: str) -> dict:
     """Clear one count block until its observed count increases again."""
     manifest = load_manifest(vault, vault_tag)
@@ -418,6 +527,7 @@ def _apply_count_ceilings(manifest: dict) -> None:
             return
 
 
+@_locked
 def reconcile_spend_from_disk(vault, vault_tag: str) -> dict:
     """Fold vault_tag-filtered notes and fetched URLs into spend.
 
@@ -454,6 +564,7 @@ def reconcile_spend_from_disk(vault, vault_tag: str) -> dict:
     return manifest
 
 
+@_locked
 def set_status(vault, vault_tag: str, status: str, blocked_on: str | None = None) -> dict:
     if status not in RUN_STATUSES:
         raise RunError(f"invalid run status '{status}' (one of {RUN_STATUSES})")
@@ -871,6 +982,7 @@ def verify_run(vault, vault_tag: str) -> dict:
     return {"vault_tag": vault_tag, "passed": all(c["ok"] for c in checks), "checks": checks}
 
 
+@_locked
 def finish_run(vault, vault_tag: str) -> dict:
     """The terminal ship gate: verify, then flip the manifest accordingly.
 
