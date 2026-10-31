@@ -193,11 +193,35 @@ def search_fts(
     tgw = w.get("tags_weight", 5.0)
     aw = w.get("aliases_weight", 3.0)
 
+    # The status multipliers and the --ranked quality factor are part of the
+    # score SQL orders and pages by. Re-sorting only the fetched rows after
+    # LIMIT/OFFSET made a page disagree with the full ranking.
+    score_factors: list[str] = []
+    score_params: list[float] = []
+    if ranking and not filter_only:
+        score_factors.append(
+            "CASE n.status WHEN 'evergreen' THEN ? WHEN 'deprecated' THEN ? "
+            "WHEN 'stale' THEN ? ELSE 1.0 END"
+        )
+        score_params += [
+            ranking.get("boost_evergreen", 1.0),
+            ranking.get("penalize_deprecated", 1.0),
+            ranking.get("penalize_stale", 1.0),
+        ]
+    # Fold the composite source-quality score into relevance. (0.5 + quality)
+    # keeps unscored notes (quality NULL -> neutral 1.0x via fallback 0.5)
+    # competitive while a ground-truth-tier, high-authority source (~1.0)
+    # roughly triples a retracted one (~0.05).
+    if quality_ranked and not filter_only:
+        score_factors.append("(0.5 + COALESCE(n.quality_score, 0.5))")
+
     source = "notes n" if filter_only else "notes_fts fts JOIN notes n ON fts.id = n.id"
     match = "1=1" if filter_only else "notes_fts MATCH ?"
     snippet = "COALESCE(n.summary, '')" if filter_only else "snippet(notes_fts, 2, '>>>', '<<<', '...', 64)"
-    score = "0.0" if filter_only else f"bm25(notes_fts, 0.0, {tw}, {bw}, {tgw}, {aw})"
-    order = "n.created DESC, n.id" if filter_only else "score"
+    score = "0.0" if filter_only else " * ".join(
+        [f"abs(bm25(notes_fts, 0.0, {tw}, {bw}, {tgw}, {aw}))", *score_factors]
+    )
+    order = "n.created DESC, n.id" if filter_only else "score DESC"
     sql = f"""
         SELECT
             n.id, n.title, n.path, n.status, n.type, n.tier, n.content_type,
@@ -214,7 +238,7 @@ def search_fts(
         LIMIT ? OFFSET ?
     """
 
-    params = [*([fts_query] if not filter_only else []), *filter_params, limit, offset]
+    params = [*score_params, *([fts_query] if not filter_only else []), *filter_params, limit, offset]
 
     try:
         rows = conn.execute(sql, params).fetchall()
@@ -248,33 +272,8 @@ def search_fts(
             "word_count": row["word_count"],
             "summary": row["summary"],
             "quality_score": row["quality_score"] if "quality_score" in row.keys() else None,  # noqa: SIM118
-            "score": abs(row["score"]),
+            "score": row["score"],
             "snippet": row["snippet"] or "",
         })
-
-    # Apply status-based ranking adjustments
-    if ranking:
-        boost_evergreen = ranking.get("boost_evergreen", 1.0)
-        penalize_deprecated = ranking.get("penalize_deprecated", 1.0)
-        penalize_stale = ranking.get("penalize_stale", 1.0)
-        for r in results:
-            if r["status"] == "evergreen":
-                r["score"] *= boost_evergreen
-            elif r["status"] == "deprecated":
-                r["score"] *= penalize_deprecated
-            elif r["status"] == "stale":
-                r["score"] *= penalize_stale
-        results.sort(key=lambda x: x["score"], reverse=True)
-
-    # Quality-weighted re-rank (opt-in): fold the composite source-quality
-    # score into relevance. (0.5 + quality) keeps unscored notes (quality
-    # NULL -> neutral 1.0x via fallback 0.5) competitive while a
-    # ground-truth-tier, high-authority source (~1.0) roughly triples a
-    # retracted one (~0.05).
-    if quality_ranked:
-        for r in results:
-            q = r.get("quality_score")
-            r["score"] *= 0.5 + (q if q is not None else 0.5)
-        results.sort(key=lambda x: x["score"], reverse=True)
 
     return results
