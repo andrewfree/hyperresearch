@@ -925,7 +925,7 @@ def note_rm(
         _delete_note_from_db(vault.db, note_id)
 
     plan = compute_sync_plan(vault)
-    execute_sync(vault, plan)
+    execute_sync(vault, plan, deleted_ids={note_id})
 
     payload: dict = {"deleted": note_id}
     if removed_raw:
