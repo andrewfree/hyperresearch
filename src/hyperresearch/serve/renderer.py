@@ -43,16 +43,27 @@ def _is_safe_url(url: str) -> bool:
     return m.group(1).lower() in SAFE_URL_SCHEMES
 
 
+def _attr_url(url: str) -> str:
+    """`url` for an href or src attribute, its brackets as character references.
+
+    The image, link and wiki-link patterns run after this over the same text.
+    Markup one of them rendered inside the attribute would end it at its first
+    quote and turn the note text after it into attributes (an onerror=...).
+    None of them can match without '['; the browser decodes the references.
+    """
+    return url.replace("[", "&#91;").replace("]", "&#93;")
+
+
 def _link(url: str, text: str) -> str:
     if not _is_safe_url(url):
         return text  # keep the label, drop the link
-    return f'<a href="{url}">{text}</a>'
+    return f'<a href="{_attr_url(url)}">{text}</a>'
 
 
 def _image(url: str, alt: str) -> str:
     if not _is_safe_url(url):
         return alt
-    return f'<img src="{url}" alt="{alt}">'
+    return f'<img src="{_attr_url(url)}" alt="{alt}">'
 
 
 # Bodies are fetched pages, and re.sub holds the GIL, so one quadratic scan
