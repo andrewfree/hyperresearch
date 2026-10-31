@@ -118,18 +118,18 @@ def test_brackets_in_a_url_survive_as_character_references():
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ("![diagram](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="diagram">'),
-        ("![](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="">'),
-        ('![a "b" & c](d.png)', '<img src="d.png" alt="a &quot;b&quot; &amp; c">'),
+        ("![diagram](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="diagram" referrerpolicy="no-referrer">'),
+        ("![](https://example.com/d.png)", '<img src="https://example.com/d.png" alt="" referrerpolicy="no-referrer">'),
+        ('![a "b" & c](d.png)', '<img src="d.png" alt="a &quot;b&quot; &amp; c" referrerpolicy="no-referrer">'),
         (
             "[![badge](https://example.com/b.svg)](https://example.com)",
-            '<a href="https://example.com"><img src="https://example.com/b.svg" alt="badge"></a>',
+            '<a href="https://example.com"><img src="https://example.com/b.svg" alt="badge" referrerpolicy="no-referrer"></a>',
         ),
     ],
     ids=["image", "empty-alt", "alt-escaped", "linked-image"],
 )
 def test_images_render_as_img(body, expected):
-    out = render_markdown(body)
+    out = render_markdown(body, allow_remote_images=True)
 
     assert expected in out
     assert "!<a" not in out

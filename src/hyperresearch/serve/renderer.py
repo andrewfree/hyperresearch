@@ -6,6 +6,7 @@ import html
 import re
 import urllib.parse
 from collections.abc import Mapping
+from functools import partial
 
 
 def path_href(prefix: str, segment: str) -> str:
@@ -61,10 +62,18 @@ def _link(url: str, text: str) -> str:
     return f'<a href="{_attr_url(url)}">{text}</a>'
 
 
-def _image(url: str, alt: str) -> str:
-    if not _is_safe_url(url):
+def _image(m: re.Match[str], *, allow_remote_images: bool = False) -> str:
+    url, alt = m.group(2), m.group(1)
+    # Match browser scheme handling and protocol-relative backslash URLs.
+    probe = "".join(c for c in html.unescape(url) if ord(c) > 0x20).replace("\\", "/")
+    scheme = _SCHEME_RE.match(probe)
+    is_data_image = probe.lower().startswith("data:image/")
+    if not is_data_image and not _is_safe_url(url):
         return alt
-    return f'<img src="{_attr_url(url)}" alt="{alt}">'
+    remote = probe.startswith("//") or (scheme and scheme.group(1).lower() in {"http", "https"})
+    if remote and not allow_remote_images:
+        return _link(url, alt)
+    return f'<img src="{_attr_url(url)}" alt="{alt}" referrerpolicy="no-referrer">'
 
 
 # Bodies are fetched pages, and re.sub holds the GIL, so one quadratic scan
@@ -94,7 +103,7 @@ MD_PATTERNS = [
     (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
     # Images, before links: the link pattern also matches the "[alt](url)"
     # inside "![alt](url)" and would leave "!<a ...>" behind.
-    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
+    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), _image),
     # Links
     (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
     # Horizontal rule
@@ -106,7 +115,9 @@ MD_PATTERNS = [
 ]
 
 
-def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str:
+def render_markdown(
+    body: str, resolved: Mapping[str, str] | None = None, *, allow_remote_images: bool = False,
+) -> str:
     """Convert markdown body to HTML, resolving [[wiki-links]].
 
     ``resolved`` maps a link's ref, as sync stored it in the links table, to
@@ -150,6 +161,8 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
     # Keep formatting out of refs and labels. Link/image patterns exclude the
     # placeholder delimiter so restoration cannot put markup in an attribute.
     for pattern, replacement in MD_PATTERNS:
+        if replacement is _image:
+            replacement = partial(_image, allow_remote_images=allow_remote_images)
         text = pattern.sub(replacement, text)
 
     # Lists (simple)

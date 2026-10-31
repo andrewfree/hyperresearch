@@ -504,7 +504,9 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
                 (note_id,),
             )
         }
-        html_body = render_markdown(row["body"], resolved)
+        html_body = render_markdown(
+            row["body"], resolved, allow_remote_images=self.vault.config.viewer.allow_remote_images,
+        )
         # `note new --body` and MCP create_note store the body as given, with
         # no "# Title" line, so show the title unless the body opens with one.
         first_line = next((line for line in row["body"].splitlines() if line.strip()), "")

@@ -76,6 +76,13 @@ class AssetSettings:
 
 
 @dataclass(frozen=True)
+class ViewerSettings:
+    """Image loading behavior for the local viewer ([viewer] section)."""
+
+    allow_remote_images: bool = False
+
+
+@dataclass(frozen=True)
 class DedupSettings:
     """Near-duplicate detection parameters ([dedup] section)."""
 
@@ -259,6 +266,7 @@ class VaultConfig:
     fetch: FetchSettings = field(default_factory=FetchSettings)
     junk: JunkGates = field(default_factory=JunkGates)
     assets: AssetSettings = field(default_factory=AssetSettings)
+    viewer: ViewerSettings = field(default_factory=ViewerSettings)
     dedup: DedupSettings = field(default_factory=DedupSettings)
     lint: LintSettings = field(default_factory=LintSettings)
     ranking: RankingSettings = field(default_factory=RankingSettings)
@@ -308,6 +316,7 @@ class VaultConfig:
             fetch=_build_section(FetchSettings, data.get("fetch", {})),
             junk=_build_section(JunkGates, data.get("junk", {})),
             assets=_build_section(AssetSettings, data.get("assets", {})),
+            viewer=_build_section(ViewerSettings, data.get("viewer", {})),
             dedup=_build_section(DedupSettings, data.get("dedup", {})),
             lint=_build_section(LintSettings, data.get("lint", {})),
             ranking=_build_section(RankingSettings, data.get("ranking", {})),
@@ -415,6 +424,7 @@ class VaultConfig:
         lines += self._section_lines("fetch", self.fetch)
         lines += self._section_lines("junk", self.junk)
         lines += self._section_lines("assets", self.assets)
+        lines += self._section_lines("viewer", self.viewer)
         lines += self._section_lines("dedup", self.dedup)
         lines += self._section_lines("lint", self.lint)
         lines += self._section_lines("ranking", self.ranking)
