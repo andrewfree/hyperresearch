@@ -533,7 +533,11 @@ def note_update(
     """Update frontmatter fields on a single note."""
     from datetime import datetime
 
-    from hyperresearch.core.frontmatter import parse_frontmatter, serialize_frontmatter
+    from hyperresearch.core.frontmatter import (
+        FrontmatterBrokenError,
+        parse_frontmatter_for_update,
+        serialize_frontmatter,
+    )
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
     from hyperresearch.models.note import ContentType, NoteStatus, Tier
 
@@ -582,7 +586,14 @@ def note_update(
 
     file_path = vault.root / row["path"]
     content = file_path.read_text(encoding="utf-8-sig")
-    meta, body = parse_frontmatter(content)
+    try:
+        meta, body = parse_frontmatter_for_update(content)
+    except FrontmatterBrokenError as e:
+        if json_output:
+            output(error(str(e), "FRONTMATTER_BROKEN"), json_mode=True)
+        else:
+            console.print(f"[red]{escape(str(e))}[/]")
+        raise typer.Exit(1)
 
     changed = []
     if set_status:
