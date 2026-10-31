@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import math
+
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import success
+from hyperresearch.models.output import error, success
 
 app = typer.Typer()
 
@@ -75,6 +78,22 @@ def config_set(
     # Type coercion
     if attr in ("auto_sync", "auto_build_index", "web_magic"):
         value = value.lower() in ("true", "1", "yes")
+    elif attr in ("search_boost_evergreen", "search_penalize_deprecated"):
+        # Stored raw, a word here was written to config.toml unquoted and
+        # every later command failed to load it. NaN and infinity parse as
+        # floats but would wreck the ranking they scale.
+        try:
+            number = float(value)
+        except ValueError:
+            number = math.nan
+        if not math.isfinite(number):
+            msg = f"{key} must be a number, got {value!r}. Nothing was changed."
+            if json_output:
+                output(error(msg, "INVALID_VALUE", vault=str(vault.root)), json_mode=True)
+            else:
+                console.print(f"[red]Error:[/] {escape(msg)}")
+            raise typer.Exit(1)
+        value = number
 
     setattr(config, attr, value)
     config.save(vault.config_path)
