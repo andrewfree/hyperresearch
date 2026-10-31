@@ -4665,11 +4665,23 @@ def installed_platforms(root: Path) -> list[str]:
 
     Lets re-render paths (`hpr profile use`) refresh every runtime the
     project was installed for instead of assuming Claude Code only.
+
+    A project bootstrapped from a global install has no entry skill of its
+    own (it lives under the home directory), only the step procedures the
+    first run added, so those count too. Missing them, a Codex project read
+    as having nothing installed and got Claude Code instead.
     """
     from hyperresearch.core.platforms import PLATFORMS, paths_for
 
-    return [
-        platform
-        for platform in PLATFORMS
-        if (root / paths_for(platform).skills_dir / "hyperresearch" / "SKILL.md").is_file()
-    ]
+    first_step = _HYPERRESEARCH_STEP_SKILLS[0]
+
+    def has_install(platform: str) -> bool:
+        paths = paths_for(platform)
+        steps = root / paths.steps_dir
+        return (
+            (root / paths.skills_dir / "hyperresearch" / "SKILL.md").is_file()
+            or (steps / first_step / "SKILL.md").is_file()
+            or (steps / f"{first_step}.md").is_file()
+        )
+
+    return [platform for platform in PLATFORMS if has_install(platform)]
