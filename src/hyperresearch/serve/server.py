@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from uuid import uuid4
 
 from hyperresearch.serve.renderer import path_href, render_markdown
 
@@ -504,7 +505,9 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
                 (note_id,),
             )
         }
-        html_body = render_markdown(row["body"], resolved)
+        html_body = render_markdown(
+            row["body"], resolved, allow_remote_images=self.vault.config.viewer.allow_remote_images,
+        )
         # `note new --body` and MCP create_note store the body as given, with
         # no "# Title" line, so show the title unless the body opens with one.
         first_line = next((line for line in row["body"].splitlines() if line.strip()), "")
@@ -560,8 +563,14 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             return
 
         from hyperresearch.search.fts import SearchQueryError, search_fts
+        # Handwritten bodies can contain control characters too. A fresh token
+        # keeps literal text from impersonating this request's highlight markers.
+        token = uuid4().hex
+        snippet_start, snippet_end = f"\x02{token}", f"\x03{token}"
         try:
-            results = search_fts(self.db, query, limit=50)
+            results = search_fts(
+                self.db, query, limit=50, snippet_start=snippet_start, snippet_end=snippet_end,
+            )
         except SearchQueryError as e:
             body += f"<p>{html_mod.escape(str(e))}</p>"
             self._send(200, body, "Search")
@@ -576,8 +585,8 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
             # </mark> we inject here would finish the tag for it.
             snippet = (
                 html_mod.escape(r["snippet"])
-                .replace("&gt;&gt;&gt;", "<mark>")
-                .replace("&lt;&lt;&lt;", "</mark>")
+                .replace(snippet_start, "<mark>")
+                .replace(snippet_end, "</mark>")
             )
             body += (
                 f'<div class="result"><div class="title">'

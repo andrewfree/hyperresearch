@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 16
 
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
@@ -254,3 +254,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
     # Indexes that depend on migration-added columns run last
     conn.executescript(POST_MIGRATE_INDEXES_SQL)
     conn.commit()
+
+
+def parent_subtree_clause(parent: str) -> tuple[str, list[str]]:
+    """Match a literal topic and its slash-delimited descendants."""
+    return (
+        "(n.parent = ? OR substr(n.parent, 1, length(?) + 1) = ? || '/')",
+        [parent, parent, parent],
+    )

@@ -10,12 +10,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hyperresearch.core.note import read_note, strip_markdown
+from hyperresearch.core.note import known_note_refs, read_note, strip_markdown
 from hyperresearch.core.patterns import (
     WIKI_LINK_RE,
     is_valid_wiki_link_target,
     strip_code,
 )
+from hyperresearch.core.vault import VAULT_INTERNAL_DIRS
 
 
 @dataclass
@@ -48,6 +49,20 @@ class _UnreadableNewFileError(Exception):
         super().__init__(f"{rel_path}: {reason}")
         self.rel_path = rel_path
         self.reason = reason
+
+
+def file_line_number(path: Path, body_line: int) -> int:
+    """Translate a cached body line to a line in the source file."""
+    from hyperresearch.core.frontmatter import FRONTMATTER_RE
+
+    try:
+        content = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        # Sync keeps the last readable cache when a file is half-written.
+        return body_line
+    # Delimiters still locate the body when cached metadata is invalid.
+    match = FRONTMATTER_RE.match(content)
+    return body_line + (content[:match.end()].count("\n") if match else 0)
 
 
 def _should_exclude(rel_path: str, exclude_parts: list[str]) -> bool:
@@ -99,8 +114,13 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
         return plan
 
     runs_dir = kb_dir / "runs"
+    internal_dirs = tuple((vault.root / name).resolve() for name in VAULT_INTERNAL_DIRS)
     disk_files: dict[str, float] = {}
     for md_file in kb_dir.rglob("*.md"):
+        # Older vaults can use the root as research_dir. Templates and
+        # runtime instructions are never notes, even under that layout.
+        if any(md_file.resolve().is_relative_to(directory) for directory in internal_dirs):
+            continue
         # Skip staging files at the research/ root. Real notes live in
         # research/notes/** or research/index/**.
         if md_file.parent == kb_dir:
@@ -155,7 +175,7 @@ def compute_sync_plan(vault, force: bool = False) -> SyncPlan:
     return plan
 
 
-def execute_sync(vault, plan: SyncPlan) -> SyncResult:
+def execute_sync(vault, plan: SyncPlan, *, deleted_ids: set[str] | None = None) -> SyncResult:
     """Execute the sync plan within a single transaction for atomicity."""
     result = SyncResult(unchanged=plan.unchanged)
     start = time.monotonic()
@@ -164,7 +184,8 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
     conn = vault.db
     conn.execute("BEGIN IMMEDIATE")
 
-    changed_ids: set[str] = set()
+    # Explicit removals already deleted their rows before move detection.
+    changed_ids: set[str] = set(deleted_ids or ())
     assets_root = vault.root / "research" / "assets"
 
     # Defense-in-depth (#25): refuse to silently smash an existing row's path
@@ -594,6 +615,7 @@ def execute_sync(vault, plan: SyncPlan) -> SyncResult:
             conn.execute("DELETE FROM assets WHERE note_id = ?", (old_id,))
 
         # Resolve links — only for changed notes' outgoing + incoming
+        _refresh_footnote_links(conn, changed_ids)
         _resolve_links_incremental(conn, changed_ids)
 
         # Record sync timestamp
@@ -680,7 +702,11 @@ def _rename_note_id(
 def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> None:
     """Insert or update a note and all related tables using proper UPSERT."""
     meta = note.meta
+    created_declared = "created" in meta.model_fields_set
     created_iso = meta.created.isoformat() if meta.created else synced_at
+    if not created_declared:
+        # A parsed default is the read time, not the note's creation time.
+        created_iso = datetime.fromtimestamp(file_mtime, UTC).isoformat()
     updated_iso = meta.updated.isoformat() if meta.updated else None
 
     reviewed_iso = meta.reviewed.isoformat() if meta.reviewed else None
@@ -709,7 +735,8 @@ def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> Non
             deprecated=excluded.deprecated,
             reviewed=excluded.reviewed, expires=excluded.expires,
             word_count=excluded.word_count, summary=excluded.summary,
-            created=excluded.created, updated=excluded.updated,
+            created=CASE WHEN ? THEN excluded.created ELSE notes.created END,
+            updated=excluded.updated,
             file_mtime=excluded.file_mtime, content_hash=excluded.content_hash,
             synced_at=excluded.synced_at,
             doi=excluded.doi, utility_score=excluded.utility_score,
@@ -729,7 +756,7 @@ def _upsert_note_to_db(conn, note, synced_at: str, file_mtime: float = 0) -> Non
             meta.doi, meta.utility_score, meta.citation_count, meta.venue,
             None if meta.is_retracted is None else int(meta.is_retracted),
             meta.oa_url, meta.oa_source, meta.oa_version, meta.oa_license,
-            meta.oa_recovery_kind,
+            meta.oa_recovery_kind, created_declared,
         ),
     )
 
@@ -795,6 +822,38 @@ def _delete_note_from_db(conn, note_id: str) -> None:
     conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
 
+def _refresh_footnote_links(conn, changed_ids: set[str], *, include_valid: bool = False) -> None:
+    """Revisit ambiguous refs after all ids, titles and aliases are indexed."""
+    if not changed_ids and not include_valid:
+        return
+    known_refs = known_note_refs(conn)
+    # Revisit unchanged sources too: a newly created target can turn a
+    # previously ignored footnote into a real link without editing its source.
+    for row in conn.execute("SELECT note_id, body FROM note_content"):
+        body = row["body"]
+        if "[[" not in body:
+            continue
+        for line_num, line in enumerate(strip_code(body).split("\n"), 1):
+            for match in WIKI_LINK_RE.finditer(line):
+                ref = match.group(1).strip().rstrip("\\")
+                valid = is_valid_wiki_link_target(ref)
+                if valid and not include_valid:
+                    continue
+                if not is_valid_wiki_link_target(ref, allow_footnotes=True):
+                    continue
+                if valid or ref.lower() in known_refs:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO links (source_id, target_ref, line_number, context) "
+                        "VALUES (?, ?, ?, ?)",
+                        (row["note_id"], ref, line_num, line.strip()[:200]),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM links WHERE source_id = ? AND target_ref = ?",
+                        (row["note_id"], ref),
+                    )
+
+
 def _resolve_links_incremental(conn, changed_ids: set[str]) -> None:
     """Resolve links incrementally — only for links affected by changed notes.
 
@@ -826,6 +885,8 @@ def _resolve_links_incremental(conn, changed_ids: set[str]) -> None:
 
 def _resolve_null_links(conn) -> None:
     """Resolve all links with target_id = NULL."""
+    # SQLite LOWER only folds ASCII; Python handles Unicode case mappings.
+    conn.create_function("casefold", 1, lambda value: value.casefold() if value is not None else None, deterministic=True)
     # Exact ID match
     conn.execute("""
         UPDATE links SET target_id = (
@@ -836,7 +897,7 @@ def _resolve_null_links(conn) -> None:
     # Case-insensitive ID match
     conn.execute("""
         UPDATE links SET target_id = (
-            SELECT n.id FROM notes n WHERE LOWER(n.id) = LOWER(links.target_ref) LIMIT 1
+            SELECT n.id FROM notes n WHERE casefold(n.id) = casefold(links.target_ref) LIMIT 1
         )
         WHERE target_id IS NULL
     """)
@@ -844,7 +905,7 @@ def _resolve_null_links(conn) -> None:
     conn.execute("""
         UPDATE links SET target_id = (
             SELECT a.note_id FROM aliases a
-            WHERE LOWER(a.alias) = LOWER(links.target_ref)
+            WHERE casefold(a.alias) = casefold(links.target_ref)
             LIMIT 1
         )
         WHERE target_id IS NULL
@@ -852,7 +913,7 @@ def _resolve_null_links(conn) -> None:
     # Title match
     conn.execute("""
         UPDATE links SET target_id = (
-            SELECT n.id FROM notes n WHERE LOWER(n.title) = LOWER(links.target_ref) LIMIT 1
+            SELECT n.id FROM notes n WHERE casefold(n.title) = casefold(links.target_ref) LIMIT 1
         )
         WHERE target_id IS NULL
     """)

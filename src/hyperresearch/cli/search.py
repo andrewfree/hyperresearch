@@ -234,11 +234,11 @@ def search(
         for r in results:
             tags_str = ", ".join(r.get("tags", []))
             console.print(
-                f"  [cyan]{r['id']}[/] [bold]{r['title']}[/] "
-                f"[dim]({r['status']})[/] [green]{tags_str}[/]"
+                f"  [cyan]{escape(r['id'])}[/] [bold]{escape(r['title'])}[/] "
+                f"[dim]({escape(r['status'])})[/] [green]{escape(tags_str)}[/]"
             )
             if r.get("snippet"):
-                console.print(f"    [dim]{r['snippet'][: vault.config.search_snippet_len]}[/]")
+                console.print(f"    [dim]{escape(r['snippet'][: vault.config.search_snippet_len])}[/]")
             if include_body and r.get("body"):
                 # Verbatim: a body is note text, never Rich markup.
                 console.print()

@@ -246,13 +246,18 @@ def ingest_claims_dir(vault, temp_dir: Path | None = None, vault_tag: str | None
 
 def search_claims(conn, query: str, limit: int = 20) -> list[dict]:
     """FTS search over claims + quoted support."""
+    from hyperresearch.search.fts import SearchQueryError, preprocess_query
+
+    fts_query = preprocess_query(query)
+    if not fts_query:
+        raise SearchQueryError("Query contains no searchable terms")
     rows = conn.execute(
         """SELECT c.id, c.note_id, c.claim, c.quoted_support, c.numbers,
                   c.confidence, c.evidence_type, c.stance_target, c.stance, c.vault_tag
            FROM claims_fts f JOIN claims c ON c.id = f.claim_id
            WHERE claims_fts MATCH ?
            ORDER BY rank LIMIT ?""",
-        (query, limit),
+        (fts_query, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 

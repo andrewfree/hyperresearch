@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from hyperresearch.cli._output import console, output, print_vault_status
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.output import error, success
 
 app = typer.Typer()
@@ -20,10 +21,21 @@ def init(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Initialize a new hyperresearch vault (Claude Code integration)."""
-    from hyperresearch.core.vault import Vault, VaultError
+    from hyperresearch.core.vault import VAULT_INTERNAL_DIRS, Vault, VaultError
+
+    root = Path(path).resolve()
+    kb_dir = (root / research_dir).resolve()
+    internal = any(kb_dir.is_relative_to((root / name).resolve()) for name in VAULT_INTERNAL_DIRS)
+    if kb_dir == root or not kb_dir.is_relative_to(root) or internal:
+        msg = "Research directory must be a subdirectory inside the vault root, outside vault internals"
+        if json_output:
+            output(error(msg, "INVALID_RESEARCH_DIR"), json_mode=True)
+        else:
+            console.print(f"[red]Error:[/] {msg}")
+        raise typer.Exit(1)
 
     try:
-        vault = Vault.init(Path(path).resolve(), name=name, research_dir=research_dir)
+        vault = Vault.init(root, name=name, research_dir=research_dir)
         data = {"vault_path": str(vault.root), "name": name}
         if json_output:
             output(success(data), json_mode=True)
@@ -72,15 +84,15 @@ def status(
     ):
         top_tags.append({"tag": row["tag"], "count": row["c"]})
 
-    total_links = conn.execute("SELECT COUNT(*) as c FROM links").fetchone()["c"]
+    total_links = conn.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL})").fetchone()["c"]
     broken = conn.execute(
-        "SELECT COUNT(*) as c FROM links WHERE target_id IS NULL"
+        f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL"
     ).fetchone()["c"]
-    orphans = conn.execute("""
+    orphans = conn.execute(f"""
         SELECT COUNT(*) as c FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
     """).fetchone()["c"]
 
     total_words = conn.execute(

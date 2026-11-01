@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 
@@ -173,7 +174,8 @@ def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, st
 
     'attention AND -' becomes 'attention'. Operators left side by side keep
     the later one, so 'AI AND / OR ML' becomes 'AI OR ML' and 'a AND NOT b',
-    which FTS5 rejects, becomes 'a NOT b'.
+    which FTS5 rejects, becomes 'a NOT b'. OR NOT cannot be expressed by
+    FTS5 and must be rejected rather than silently narrowed to NOT.
 
     A NOT that still has an operand after it is never dropped or replaced:
     'NOT foo AND bar' searched as 'foo AND bar' would return exactly the
@@ -186,6 +188,8 @@ def _drop_dangling_operators(items: list[tuple[str, str]]) -> list[tuple[str, st
         if item[0] != "op":
             out.append(item)
         elif out and out[-1][0] == "op" and out[-1][1] != "NOT":
+            if out[-1][1] == "OR" and item[1] == "NOT":
+                raise SearchQueryError("Invalid search query: OR NOT is not supported by FTS5.")
             out[-1] = item
         elif out or item[1] == "NOT":
             out.append(item)
@@ -276,7 +280,7 @@ def preprocess_query(raw: str) -> str:
 # one body: a prefix query over a 5 MB note took minutes. A body longer than
 # this gets its snippet from an excerpt of this many characters instead.
 _SNIPPET_MAX_CHARS = 16_000
-_SNIPPET_SQL = "snippet(notes_fts, 2, '>>>', '<<<', '...', 64)"
+_SNIPPET_SQL = "snippet(notes_fts, 2, ?, ?, '...', 64)"
 # A quoted phrase or a bareword of the FTS5 query, to find a first match.
 _QUERY_PART_RE = re.compile(r'"([^"]*)"|([^\W_]+)')
 _WORD_RE = re.compile(r"[^\W_]+")
@@ -301,7 +305,10 @@ def _first_match(body: str, fts_query: str) -> int:
     return m.start() if m else 0
 
 
-def _excerpt_snippet(conn: sqlite3.Connection, fts_query: str, rowid: int) -> str:
+def _excerpt_snippet(
+    conn: sqlite3.Connection, fts_query: str, rowid: int,
+    snippet_start: str, snippet_end: str,
+) -> str:
     """snippet() for a body over _SNIPPET_MAX_CHARS, run on a copy of the row
     whose body is cut to an excerpt starting shortly before the first match.
 
@@ -338,7 +345,8 @@ def _excerpt_snippet(conn: sqlite3.Connection, fts_query: str, rowid: int) -> st
             (row[0], excerpt, row[2], row[3]),
         )
         hit = scratch.execute(
-            f"SELECT {_SNIPPET_SQL} FROM notes_fts WHERE notes_fts MATCH ?", (fts_query,)
+            f"SELECT {_SNIPPET_SQL} FROM notes_fts WHERE notes_fts MATCH ?",
+            (snippet_start, snippet_end, fts_query),
         ).fetchone()
     finally:
         scratch.close()
@@ -388,6 +396,8 @@ def search_fts(
     include_index: bool = False,
     ranking: dict | None = None,
     quality_ranked: bool = False,
+    snippet_start: str = ">>>",
+    snippet_end: str = "<<<",
 ) -> list[dict]:
     """Execute a full-text search against the notes_fts table.
 
@@ -460,7 +470,7 @@ def search_fts(
             {snippet} as snippet,
             {fts_rowid} as fts_rowid,
             {score} as score,
-            (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+            (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM {source}
         WHERE {match}
         {filter_clause}
@@ -469,7 +479,10 @@ def search_fts(
         LIMIT ? OFFSET ?
     """
 
-    params = [*score_params, *([fts_query] if not filter_only else []), *filter_params, limit, offset]
+    params = [
+        *([snippet_start, snippet_end] if not filter_only else []),
+        *score_params, *([fts_query] if not filter_only else []), *filter_params, limit, offset,
+    ]
 
     try:
         rows = conn.execute(sql, params).fetchall()
@@ -482,10 +495,10 @@ def search_fts(
 
     results = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         snippet = row["snippet"]
         if snippet is None and not filter_only:
-            snippet = _excerpt_snippet(conn, fts_query, row["fts_rowid"])
+            snippet = _excerpt_snippet(conn, fts_query, row["fts_rowid"], snippet_start, snippet_end)
         results.append({
             "id": row["id"],
             "title": row["title"],

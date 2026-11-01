@@ -9,8 +9,9 @@ from datetime import UTC
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
+from hyperresearch.cli._output import console, discover_vault, output
 from hyperresearch.core.hooks import SCAFFOLD_ONLY_SECTION_HEADERS
+from hyperresearch.core.sync import file_line_number
 from hyperresearch.models.output import error, success
 
 app = typer.Typer(invoke_without_command=True)
@@ -261,9 +262,7 @@ def lint(
             console.print(f"[red]Error:[/] {escape(msg)}")
         raise typer.Exit(1)
 
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
     conn = vault.db
 
@@ -1698,7 +1697,7 @@ def lint(
                 "severity": "warning",
                 "note_id": row["source_id"],
                 "note_path": row["path"],
-                "line": row["line_number"],
+                "line": file_line_number(vault.root / row["path"], row["line_number"]),
                 "message": f"Broken link: [[{row['target_ref']}]]",
             })
 
