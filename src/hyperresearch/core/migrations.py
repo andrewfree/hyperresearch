@@ -328,6 +328,15 @@ def _migrate_v15_unicode_links(conn: sqlite3.Connection) -> None:
     _resolve_null_links(conn)
 
 
+def _migrate_v16_backtick_links(conn: sqlite3.Connection) -> None:
+    """Replace refs mangled by code stripping without rewriting notes."""
+    conn.execute(
+        "DELETE FROM links WHERE source_id IN ("
+        "SELECT note_id FROM note_content WHERE instr(body, '[[') > 0 AND instr(body, '`') > 0)"
+    )
+    _migrate_v14_wiki_links(conn)
+
+
 MIGRATIONS: dict[int, str | Callable[[sqlite3.Connection], None]] = {
     2: """
 CREATE TABLE IF NOT EXISTS tag_aliases (
@@ -379,6 +388,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
     13: _migrate_v13_nullable_retraction,
     14: _migrate_v14_wiki_links,
     15: _migrate_v15_unicode_links,
+    16: _migrate_v16_backtick_links,
 }
 
 
