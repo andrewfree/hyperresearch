@@ -64,12 +64,23 @@ def test_port_held_by_a_wildcard_listener_is_refused(make_listener):
 def test_ipv6_only_listener_does_not_block_the_port():
     """An IPv6-only wildcard listener never sees 127.0.0.1 traffic, so there is
     nothing to take from it and the port stays usable."""
-    with _ipv6_listener(1) as other:
-        port = other.getsockname()[1]
-        assert not _answers_loopback(port), "premise: the other listener ignores 127.0.0.1"
+    for _ in range(10):
+        with _ipv6_listener(1) as other:
+            port = other.getsockname()[1]
+            # IPv6's ephemeral port may already be occupied in IPv4.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                try:
+                    probe.bind(("127.0.0.1", port))
+                except OSError as e:
+                    if e.errno != errno.EADDRINUSE:
+                        raise
+                    continue
+            assert not _answers_loopback(port), "premise: the other listener ignores 127.0.0.1"
 
-        with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
-            assert server.server_address == ("127.0.0.1", port)
+            with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
+                assert server.server_address == ("127.0.0.1", port)
+            return
+    pytest.fail("could not find a port free in both IPv4 and IPv6")
 
 
 def test_port_is_reclaimed_right_after_the_previous_server_closed(tmp_vault, monkeypatch):

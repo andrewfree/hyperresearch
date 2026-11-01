@@ -257,7 +257,7 @@ def preprocess_query(raw: str) -> str:
                     # double-quote is included because quoted phrases were
                     # already extracted by the outer split — any quote left
                     # here is an unbalanced fragment.
-                    clean = re.sub(r'[*^():{}"]', '', word)
+                    clean = re.sub(r'[*^(){}"]', '', word)
                     if not _TOKEN_CHAR_RE.search(clean):
                         continue
                     # Split glued alphanumeric (mamba3 -> "mamba 3") so 'Mamba 3'
