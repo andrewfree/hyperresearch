@@ -46,12 +46,18 @@ def enqueue(
     if reason not in REASONS:
         raise EscalationError(f"invalid reason '{reason}' (one of {REASONS})")
     now = _now()
+    # UNIQUE(url, vault_tag) permits repeated NULL tags in SQLite. Keep the
+    # null-safe check inside the INSERT so concurrent fetchers cannot race.
     cur = conn.execute(
         """INSERT OR IGNORE INTO escalations
            (url, reason, requested_by, suggested_by, utility_score, vault_tag,
             detail, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (url, reason, requested_by, suggested_by, utility_score, vault_tag, detail, now, now),
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (
+               SELECT 1 FROM escalations WHERE url = ? AND vault_tag IS ?
+           )""",
+        (url, reason, requested_by, suggested_by, utility_score, vault_tag, detail, now, now,
+         url, vault_tag),
     )
     conn.commit()
     return cur.lastrowid if cur.rowcount else None

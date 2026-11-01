@@ -7,6 +7,7 @@ from datetime import UTC
 import typer
 
 from hyperresearch.cli._output import console, output
+from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.output import error, success
 
 
@@ -53,28 +54,19 @@ def repair(
     if stub_broken:
         if not json_output:
             console.print("[bold]2/6 Stubbing broken links...[/]")
-        from hyperresearch.core.note import indexed_note_ids, stub_summary, write_note
+        from hyperresearch.core.stubs import create_stubs
         rows = vault.db.execute(
-            "SELECT DISTINCT target_ref FROM links WHERE target_id IS NULL"
+            f"SELECT DISTINCT target_ref FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL"
         ).fetchall()
-        for row in rows:
-            target = row["target_ref"]
-            title = target.replace("-", " ").replace("_", " ").title()
-            try:
-                # Sideline stubs to research/temp/ — see note in cli/graph.py
-                write_note(
-                    vault.temp_dir, title,
-                    body=f"# {title}\n\n*Stub — created to resolve a broken link. Expand this note.*\n",
-                    note_id=target, status="draft",
-                    summary=stub_summary(target),
-                    taken_ids=indexed_note_ids(vault.db),
+        created, errors = create_stubs(
+            vault, [row["target_ref"] for row in rows], skip_errors=True,
+        )
+        stubs_created = len(created)
+        if not json_output:
+            for failure in errors:
+                console.print(
+                    f"  [yellow]stub skipped[/] {failure['target']!r}: {failure['error']}"
                 )
-                stubs_created += 1
-            except Exception as exc:
-                # A visible skip, not a silent one: a bare pass here hides
-                # exactly the malformed-target failures this loop can hit.
-                if not json_output:
-                    console.print(f"  [yellow]stub skipped[/] {target!r}: {exc}")
         if stubs_created:
             plan = compute_sync_plan(vault)
             execute_sync(vault, plan)
@@ -180,12 +172,12 @@ def repair(
                 pass
 
         # Review -> Evergreen
-        reviews = vault.db.execute("""
+        reviews = vault.db.execute(f"""
             SELECT n.id, n.path FROM notes n
             WHERE n.status = 'review' AND n.type NOT IN ('index')
               AND n.word_count >= 100
-              AND (n.id IN (SELECT DISTINCT source_id FROM links)
-                   OR n.id IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL))
+              AND (n.id IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
+                   OR n.id IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL))
         """).fetchall()
         for row in reviews:
             try:
@@ -243,9 +235,9 @@ def repair(
             console.print("[bold]6/6 Updating agent docs...[/]")
         from hyperresearch.core.agent_docs import inject_agent_docs
         from hyperresearch.core.hooks import installed_platforms
-        modified = inject_agent_docs(vault.root)
-        if "codex" in installed_platforms(vault.root):
-            modified += inject_agent_docs(vault.root, platform="codex")
+        modified: list[str] = []
+        for platform in installed_platforms(vault.root) or ["claude"]:
+            modified += inject_agent_docs(vault.root, platform=platform)
         report["agent_docs"] = modified
         if not json_output:
             if modified:
@@ -258,12 +250,12 @@ def repair(
             console.print("[dim]6/6 Skipping agent docs[/]")
 
     # Final lint summary
-    broken = vault.db.execute("SELECT COUNT(*) as c FROM links WHERE target_id IS NULL").fetchone()["c"]
-    orphans = vault.db.execute("""
+    broken = vault.db.execute(f"SELECT COUNT(*) as c FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NULL").fetchone()["c"]
+    orphans = vault.db.execute(f"""
         SELECT COUNT(*) as c FROM notes n
         WHERE n.type NOT IN ('index', 'raw')
-          AND n.id NOT IN (SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL)
-          AND n.id NOT IN (SELECT DISTINCT source_id FROM links)
+          AND n.id NOT IN (SELECT DISTINCT target_id FROM ({NOTE_LINKS_SQL}) WHERE target_id IS NOT NULL)
+          AND n.id NOT IN (SELECT DISTINCT source_id FROM ({NOTE_LINKS_SQL}))
     """).fetchone()["c"]
     total = vault.db.execute("SELECT COUNT(*) as c FROM notes WHERE type NOT IN ('index')").fetchone()["c"]
     report["health"] = {"total_notes": total, "broken_links": broken, "orphans": orphans}

@@ -6,6 +6,7 @@ import html
 import re
 import urllib.parse
 from collections.abc import Mapping
+from functools import partial
 
 
 def path_href(prefix: str, segment: str) -> str:
@@ -58,13 +59,25 @@ def _attr_url(url: str) -> str:
 def _link(url: str, text: str) -> str:
     if not _is_safe_url(url):
         return text  # keep the label, drop the link
+    # A blocked image inside a link has already become an anchor. Keep the
+    # outer destination without nesting anchors, which browsers split apart.
+    if "<a " in text:
+        text = re.sub(r'<a href="[^"]*">|</a>', "", text)
     return f'<a href="{_attr_url(url)}">{text}</a>'
 
 
-def _image(url: str, alt: str) -> str:
-    if not _is_safe_url(url):
+def _image(m: re.Match[str], *, allow_remote_images: bool = False) -> str:
+    url, alt = m.group(2), m.group(1)
+    # Match browser scheme handling and protocol-relative backslash URLs.
+    probe = "".join(c for c in html.unescape(url) if ord(c) > 0x20).replace("\\", "/")
+    scheme = _SCHEME_RE.match(probe)
+    is_data_image = probe.lower().startswith("data:image/")
+    if not is_data_image and not _is_safe_url(url):
         return alt
-    return f'<img src="{_attr_url(url)}" alt="{alt}">'
+    remote = probe.startswith("//") or (scheme and scheme.group(1).lower() in {"http", "https"})
+    if remote and not allow_remote_images:
+        return _link(url, alt)
+    return f'<img src="{_attr_url(url)}" alt="{alt}" referrerpolicy="no-referrer">'
 
 
 # Bodies are fetched pages, and re.sub holds the GIL, so one quadratic scan
@@ -74,8 +87,17 @@ def _image(url: str, alt: str) -> str:
 # A URL may still hold balanced (...) pairs, as Wikipedia URLs do. It never
 # holds a raw '"': the body was escaped, so one is an image rendered just
 # before ('[a](x![b](c))'), and its quotes would end the href.
-_LINK_TEXT = r"[^\[\]]"
-_LINK_URL = r'((?:[^()"]|\([^()"]*\))+)'
+_LINK_TEXT = r"[^\[\]\x00]"
+_LINK_URL = r'((?:[^()"\x00]|\([^()"\x00]*\))+)'
+
+_INLINE_PATTERNS = [
+    # Bold/italic
+    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"<strong><em>\1</em></strong>"),
+    (re.compile(r"\*\*(.+?)\*\*"), r"<strong>\1</strong>"),
+    (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
+    # Code
+    (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+]
 
 # Simple markdown patterns
 MD_PATTERNS = [
@@ -86,15 +108,10 @@ MD_PATTERNS = [
     (re.compile(r"^###\s+(.+)$", re.MULTILINE), r"<h3>\1</h3>"),
     (re.compile(r"^##\s+(.+)$", re.MULTILINE), r"<h2>\1</h2>"),
     (re.compile(r"^#\s+(.+)$", re.MULTILINE), r"<h1>\1</h1>"),
-    # Bold/italic
-    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"<strong><em>\1</em></strong>"),
-    (re.compile(r"\*\*(.+?)\*\*"), r"<strong>\1</strong>"),
-    (re.compile(r"\*(.+?)\*"), r"<em>\1</em>"),
-    # Code
-    (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
+    *_INLINE_PATTERNS,
     # Images, before links: the link pattern also matches the "[alt](url)"
     # inside "![alt](url)" and would leave "!<a ...>" behind.
-    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), lambda m: _image(m.group(2), m.group(1))),
+    (re.compile(rf"!\[({_LINK_TEXT}*)\]\({_LINK_URL}\)"), _image),
     # Links
     (re.compile(rf"\[({_LINK_TEXT}+)\]\({_LINK_URL}\)"), lambda m: _link(m.group(2), m.group(1))),
     # Horizontal rule
@@ -106,7 +123,9 @@ MD_PATTERNS = [
 ]
 
 
-def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str:
+def render_markdown(
+    body: str, resolved: Mapping[str, str] | None = None, *, allow_remote_images: bool = False,
+) -> str:
     """Convert markdown body to HTML, resolving [[wiki-links]].
 
     ``resolved`` maps a link's ref, as sync stored it in the links table, to
@@ -125,11 +144,8 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
 
     text = re.sub(r"```(\w*)\n(.*?)```", save_code_block, text, flags=re.DOTALL)
 
-    # Apply markdown patterns
-    for pattern, replacement in MD_PATTERNS:
-        text = pattern.sub(replacement, text)
-
     # Wiki links: [[target|display]] or [[target]]
+    wiki_links = {}
     def replace_wiki_link(m):
         full = m.group(0)
         # Unescape the brackets that html.escape would have converted
@@ -142,12 +158,23 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
         display = display.strip()
         # Look the ref up the way sync stored it: unescaped, trailing '\' dropped.
         ref = html.unescape(target).rstrip("\\")
-        return f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
+        for pattern, replacement in _INLINE_PATTERNS:
+            display = pattern.sub(replacement, display)
+        placeholder = f"\x00WIKI{len(wiki_links)}\x00"
+        wiki_links[placeholder] = (
+            f'<a href="{path_href("/note/", resolved.get(ref, ref))}" class="wiki-link">{display}</a>'
+        )
+        return placeholder
 
     # Same bound as core.patterns.WIKI_LINK_RE: no '[' inside, one line only.
-    # The body was escaped, so a raw '"' here is a link rendered above
-    # ('[[t [a](x) u]]'); taken as a target it would end the href attribute.
     text = re.sub(r'\[\[([^\[\]\n"]+)\]\]', replace_wiki_link, text)
+
+    # Keep surrounding formatting out of refs. Link/image patterns exclude the
+    # placeholder delimiter so restoration cannot put markup in an attribute.
+    for pattern, replacement in MD_PATTERNS:
+        if replacement is _image:
+            replacement = partial(_image, allow_remote_images=allow_remote_images)
+        text = pattern.sub(replacement, text)
 
     # Lists (simple)
     text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
@@ -173,6 +200,9 @@ def render_markdown(body: str, resolved: Mapping[str, str] | None = None) -> str
     if in_table:
         result_lines.append(_render_table(table_lines))
     text = "\n".join(result_lines)
+
+    # One scan also keeps a page with many valid links linear in size.
+    text = re.sub(r"\x00WIKI[0-9]+\x00", lambda m: wiki_links.get(m.group(0), m.group(0)), text)
 
     # Restore code blocks. They were saved from the already-escaped body, so
     # escaping them again showed '&lt;' and '&amp;' as literal text.

@@ -108,12 +108,23 @@ def _strip_inline_code(text: str, keep_length: bool = False) -> str:
     for i, (a, b) in enumerate(runs):
         by_len.setdefault(b - a, []).append(i)
     cursor = dict.fromkeys(by_len, 0)
+    wiki_spans = [m.span() for m in WIKI_LINK_RE.finditer(text)]
+    wiki_index = 0
 
     out: list[str] = []
     pos = 0
     i = 0
     while i < len(runs):
         a, b = runs[i]
+        while wiki_index < len(wiki_spans) and wiki_spans[wiki_index][1] <= a:
+            wiki_index += 1
+        if wiki_index < len(wiki_spans):
+            start, end = wiki_spans[wiki_index]
+            # A wiki ref opened in prose owns its backticks. A ref inside
+            # an outer code span is still consumed with that code span.
+            if pos <= start < a < end:
+                i += 1
+                continue
         n = b - a
         group = by_len[n]
         k = cursor[n]
@@ -174,8 +185,8 @@ _CITE_PREFIX_RE = re.compile(
 # Roman-numeral footnotes: [[iv]], [[xii]], [[ccxliv]] (lowercase or upper).
 # Academic papers use these for appendices and preface footnotes. Uses the
 # standard Roman-numeral grammar (not just "chars in [ivxlcdm]") so real
-# words like "civic" or "mix" don't match by accident. The empty string is
-# explicitly excluded — it would otherwise match M{0}X{0}I{0}.
+# non-numerals like "civic" do not match by accident. The empty string is
+# explicitly excluded because it would otherwise match M{0}X{0}I{0}.
 _ROMAN_FOOTNOTE_RE = re.compile(
     r"^(?=[ivxlcdm])M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$",
     re.IGNORECASE,
@@ -191,7 +202,7 @@ _SYMBOL_FOOTNOTE_RE = re.compile(
 # [[table1]], [[figure-4b]], [[eq:7]], [[scheme-3]]. These are cross-
 # references within a document, not wiki-links to other notes.
 _DOC_REF_PREFIX_RE = re.compile(
-    r"^(?:fig(?:ure)?|tab(?:le)?|eq(?:uation)?|scheme|chart|plate|box|chart|algo(?:rithm)?)[-_:]?\w*$",
+    r"^(?:fig(?:ure)?|tab(?:le)?|eq(?:uation)?|scheme|chart|plate|box|chart|algo(?:rithm)?)[-_:]?\d+[a-z]?$",
     re.IGNORECASE,
 )
 
@@ -211,7 +222,7 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
 _SHELL_FRAGMENT_CHARS_RE = re.compile(r'[$"`=\\<>;]')
 
 
-def is_valid_wiki_link_target(ref: str) -> bool:
+def is_valid_wiki_link_target(ref: str, *, allow_footnotes: bool = False) -> bool:
     """Return True if a ``[[ref]]`` should be treated as a note reference.
 
     Filters out content that crawl4ai and other markdown fetchers sometimes
@@ -246,17 +257,12 @@ def is_valid_wiki_link_target(ref: str) -> bool:
         return False
     if ref.startswith(("http://", "https://", "ftp://", "mailto:", "#", "/")):
         return False
-    if _CITATION_FOOTNOTE_RE.match(ref):
-        return False
-    if _CITE_PREFIX_RE.match(ref):
-        return False
-    if _ROMAN_FOOTNOTE_RE.match(ref):
-        return False
-    if _SYMBOL_FOOTNOTE_RE.match(ref):
-        return False
     if _TEMPLATE_PLACEHOLDER_RE.search(ref):
         return False
-    if _SHELL_FRAGMENT_CHARS_RE.search(ref):
+    # Known titles and aliases may contain backticks, but shell syntax
+    # must still be rejected even when citation heuristics are bypassed.
+    shell_ref = ref.replace("`", "") if allow_footnotes else ref
+    if _SHELL_FRAGMENT_CHARS_RE.search(shell_ref):
         return False
     # Leading '-' or '!' is option/negation syntax (`-n "$kernel"`,
     # `! -f x`), not a reference. Mid-string they stay legal (titles).
@@ -267,4 +273,9 @@ def is_valid_wiki_link_target(ref: str) -> bool:
         return False
     if ref.count("[") != ref.count("]"):
         return False
-    return not _DOC_REF_PREFIX_RE.match(ref)
+    if allow_footnotes:
+        return True
+    return not any(pattern.match(ref) for pattern in (
+        _CITATION_FOOTNOTE_RE, _CITE_PREFIX_RE, _ROMAN_FOOTNOTE_RE,
+        _SYMBOL_FOOTNOTE_RE, _DOC_REF_PREFIX_RE,
+    ))

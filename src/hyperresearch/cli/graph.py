@@ -5,8 +5,9 @@ from __future__ import annotations
 import typer
 from rich.markup import escape
 
-from hyperresearch.cli._output import console, output
-from hyperresearch.models.output import error, success
+from hyperresearch.cli._output import console, discover_vault, output
+from hyperresearch.core.sync import file_line_number
+from hyperresearch.models.output import success
 
 app = typer.Typer()
 
@@ -18,9 +19,7 @@ def graph_backlinks(
 ) -> None:
     """Show what links TO this note."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -40,7 +39,7 @@ def graph_backlinks(
             "source_id": r["source_id"],
             "source_title": r["source_title"],
             "source_path": r["source_path"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
             "context": r["context"],
         }
         for r in rows
@@ -53,12 +52,12 @@ def graph_backlinks(
         )
     else:
         if not backlinks:
-            console.print(f"[dim]No backlinks to {note_id}[/]")
+            console.print(f"[dim]No backlinks to {escape(note_id)}[/]")
             return
-        console.print(f"[bold]Backlinks to {note_id}:[/]")
+        console.print(f"[bold]Backlinks to {escape(note_id)}:[/]")
         for bl in backlinks:
             console.print(
-                f"  [cyan]{bl['source_id']}[/] — {bl['source_title']} "
+                f"  [cyan]{escape(bl['source_id'])}[/] - {escape(bl['source_title'])} "
                 f"[dim](line {bl['line_number']})[/]"
             )
 
@@ -69,16 +68,15 @@ def graph_outlinks(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
     """Show what this note links TO."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
         """
         SELECT l.target_ref, l.target_id, n.title as target_title,
-               l.line_number, l.context
+               l.line_number, l.context, src.path as source_path
         FROM links l
+        JOIN notes src ON src.id = l.source_id
         LEFT JOIN notes n ON l.target_id = n.id
         WHERE l.source_id = ?
         ORDER BY l.line_number
@@ -91,7 +89,7 @@ def graph_outlinks(
             "target_ref": r["target_ref"],
             "target_id": r["target_id"],
             "target_title": r["target_title"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
             "resolved": r["target_id"] is not None,
         }
         for r in rows
@@ -104,9 +102,9 @@ def graph_outlinks(
         )
     else:
         if not outlinks:
-            console.print(f"[dim]No outgoing links from {note_id}[/]")
+            console.print(f"[dim]No outgoing links from {escape(note_id)}[/]")
             return
-        console.print(f"[bold]Links from {note_id}:[/]")
+        console.print(f"[bold]Links from {escape(note_id)}:[/]")
         for ol in outlinks:
             status = "[green]OK[/]" if ol["resolved"] else "[red]BROKEN[/]"
             title = ol.get("target_title") or ol["target_ref"]
@@ -121,9 +119,7 @@ def graph_orphans(
 ) -> None:
     """Find notes with no inbound or outbound links."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(f"""
@@ -145,21 +141,19 @@ def graph_orphans(
             return
         console.print(f"[bold]Orphan notes ({len(orphans)}):[/]")
         for o in orphans:
-            console.print(f"  [cyan]{o['id']}[/] — {o['title']}")
+            console.print(f"  [cyan]{escape(o['id'])}[/] - {escape(o['title'])}")
 
 
 @app.command("broken")
 def graph_broken(
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
-    """Find broken [[links]] that don't resolve."""
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    r"""Find broken [\[links]] that don't resolve."""
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute("""
-        SELECT l.source_id, n.title as source_title, l.target_ref, l.line_number
+        SELECT l.source_id, n.title as source_title, l.target_ref, l.line_number, n.path as source_path
         FROM links l
         JOIN notes n ON l.source_id = n.id
         WHERE l.target_id IS NULL
@@ -171,7 +165,7 @@ def graph_broken(
             "source_id": r["source_id"],
             "source_title": r["source_title"],
             "target_ref": r["target_ref"],
-            "line_number": r["line_number"],
+            "line_number": file_line_number(vault.root / r["source_path"], r["line_number"]),
         }
         for r in rows
     ]
@@ -185,7 +179,7 @@ def graph_broken(
         console.print(f"[bold red]Broken links ({len(broken)}):[/]")
         for b in broken:
             link = escape("[[" + b["target_ref"] + "]]")
-            console.print(f"  [cyan]{b['source_id']}[/] line {b['line_number']}: {link}")
+            console.print(f"  [cyan]{escape(b['source_id'])}[/] line {b['line_number']}: {link}")
 
 
 @app.command("stub")
@@ -193,11 +187,9 @@ def graph_stub(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview what would be created"),
     json_output: bool = typer.Option(False, "--json", "-j", help="JSON output"),
 ) -> None:
-    """Create stub notes for all broken [[links]]."""
-    from hyperresearch.core.note import indexed_note_ids, stub_summary, write_note
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    r"""Create stub notes for all broken [\[links]]."""
+    from hyperresearch.core.stubs import create_stubs
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -219,27 +211,13 @@ def graph_stub(
         else:
             console.print(f"[bold]Would create {len(targets)} stub notes:[/]")
             for t in targets:
-                console.print(f"  [cyan]{t}[/]")
+                console.print(f"  [cyan]{escape(t)}[/]")
         return
 
     # Stubs are sidelined to research/temp/ (not research/notes/) so they
     # resolve broken wiki-links without cluttering the real notes listing.
     # Sync still picks them up via rglob, so link-resolution works.
-    created = []
-    for target in targets:
-        title = target.replace("-", " ").replace("_", " ").title()
-        path = write_note(
-            vault.temp_dir,
-            title,
-            body=f"# {title}\n\n*Stub — created to resolve a broken link. Expand this note.*\n",
-            note_id=target,
-            status="draft",
-            summary=stub_summary(target),
-            # The resolver never matches a ref by its slug, so a broken
-            # [[foo bar]] can slugify to an id another note already holds.
-            taken_ids=indexed_note_ids(vault.db),
-        )
-        created.append({"id": target, "title": title, "path": path.relative_to(vault.root).as_posix()})
+    created, _ = create_stubs(vault, targets)
 
     # Sync to resolve the links
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
@@ -251,7 +229,7 @@ def graph_stub(
     else:
         console.print(f"[green]Created {len(created)} stub notes:[/]")
         for c in created:
-            console.print(f"  [cyan]{c['id']}[/] — {c['title']}")
+            console.print(f"  [cyan]{escape(c['id'])}[/] - {escape(c['title'])}")
 
 
 @app.command("hubs")
@@ -261,9 +239,7 @@ def graph_hubs(
 ) -> None:
     """Show most-linked-to notes."""
     from hyperresearch.core.graphrank import NOTE_LINKS_SQL
-    from hyperresearch.core.vault import Vault
-
-    vault = Vault.discover()
+    vault = discover_vault(json_output)
     vault.auto_sync()
 
     rows = vault.db.execute(
@@ -291,7 +267,7 @@ def graph_hubs(
         table.add_column("Title")
         table.add_column("Inbound Links", justify="right", style="green")
         for h in hubs:
-            table.add_row(h["id"], h["title"], str(h["inbound_links"]))
+            table.add_row(escape(h["id"]), escape(h["title"]), str(h["inbound_links"]))
         console.print(table)
 
 
@@ -308,17 +284,8 @@ def graph_rank(
     """
     from hyperresearch.core.graphrank import compute_centrality
     from hyperresearch.core.quality import compute_quality_scores
-    from hyperresearch.core.vault import Vault, VaultError
 
-    try:
-        vault = Vault.discover()
-    except VaultError as e:
-        if json_output:
-            output(error(str(e), "NO_VAULT"), json_mode=True)
-        else:
-            console.print(f"[red]Error:[/] {e}")
-        raise typer.Exit(1)
-
+    vault = discover_vault(json_output)
     vault.auto_sync()
     conn = vault.db
     ranked = compute_centrality(conn)
@@ -343,4 +310,4 @@ def graph_rank(
     else:
         console.print(f"[green]Centrality computed:[/] {ranked} notes")
         for n in top_notes:
-            console.print(f"  {n['centrality']:.4f}  [cyan]{n['id']}[/]  {n['title']}")
+            console.print(f"  {n['centrality']:.4f}  [cyan]{escape(n['id'])}[/]  {escape(n['title'])}")

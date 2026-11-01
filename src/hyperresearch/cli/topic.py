@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import typer
 
 from hyperresearch.cli._output import console, discover_vault, output
+from hyperresearch.core.db import parent_subtree_clause
 from hyperresearch.models.output import success
 
 app = typer.Typer()
@@ -122,19 +125,20 @@ def topic_show(
     vault.auto_sync()
 
     # Match exact and subtopics
+    clause, params = parent_subtree_clause(topic)
     rows = vault.db.execute(
-        """SELECT n.id, n.title, n.parent, n.status, n.word_count, n.summary,
-           (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+        f"""SELECT n.id, n.title, n.parent, n.status, n.word_count, n.summary,
+           (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM notes n
-        WHERE (n.parent = ? OR n.parent LIKE ?)
+        WHERE {clause}
           AND n.type NOT IN ('index')
         ORDER BY n.parent, n.title""",
-        (topic, topic + "/%"),
+        params,
     ).fetchall()
 
     notes = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         notes.append({
             "id": row["id"],
             "title": row["title"],

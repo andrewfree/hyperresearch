@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from datetime import UTC
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import typer
+from rich.markup import escape
 
 from hyperresearch.cli._output import console, discover_vault, output, print_note_summary
 from hyperresearch.models.output import error, success
@@ -125,7 +127,7 @@ def note_new(
             if json_output:
                 output(error(f"Invalid --tier '{tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if content_type is not None:
         try:
@@ -135,7 +137,7 @@ def note_new(
             if json_output:
                 output(error(f"Invalid --content-type '{content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -169,7 +171,7 @@ def note_new(
             pass  # Will include warning in response below
         else:
             for s in existing:
-                console.print(f"[yellow]Similar note exists:[/] {s['id']} — {s['title']}")
+                console.print(f"[yellow]Similar note exists:[/] {escape(s['id'])} - {escape(s['title'])}")
 
     # Use template if specified. Its frontmatter gives the defaults: the
     # options given here win and tags are the union. write_note then picks
@@ -251,7 +253,7 @@ def note_new(
             data["existing_tags"] = [r["tag"] for r in top_tags]
         output(success(data, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Created:[/] {rel}")
+        console.print(f"[green]Created:[/] {escape(rel)}")
 
     if edit:
         _open_in_editor(path)
@@ -276,9 +278,9 @@ def note_show(
         if not row:
             return None
         tag_list = vault.db.execute(
-            "SELECT GROUP_CONCAT(tag, ',') as tl FROM tags WHERE note_id = ?", (nid,)
+            "SELECT json_group_array(tag) as tl FROM tags WHERE note_id = ?", (nid,)
         ).fetchone()
-        tags = tag_list["tl"].split(",") if tag_list and tag_list["tl"] else []
+        tags = json.loads(tag_list["tl"]) if tag_list and tag_list["tl"] else []
         data = {
             "id": row["id"], "title": row["title"], "path": row["path"],
             "status": row["status"], "type": row["type"], "tags": tags,
@@ -332,9 +334,11 @@ def note_show(
                 if json_output:
                     output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
                 else:
-                    console.print(f"[red]Note not found:[/] {note_id}")
+                    console.print(f"[red]Note not found:[/] {escape(note_id)}")
                 raise typer.Exit(1)
-            console.print((vault.root / row["path"]).read_text(encoding="utf-8"))
+            import sys
+            # Bypass text streams so line endings and UTF-8 bytes stay intact.
+            sys.stdout.buffer.write((vault.root / row["path"]).read_bytes())
             return
 
         data = _fetch_note(note_id)
@@ -342,7 +346,7 @@ def note_show(
             if json_output:
                 output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
             else:
-                console.print(f"[red]Note not found:[/] {note_id}")
+                console.print(f"[red]Note not found:[/] {escape(note_id)}")
             raise typer.Exit(1)
 
         if json_output:
@@ -351,11 +355,11 @@ def note_show(
             if meta:
                 for k, v in data.items():
                     if v is not None:
-                        console.print(f"  [dim]{k}:[/] {v}")
+                        console.print(f"  [dim]{k}:[/] {escape(str(v))}")
             else:
                 tags = data.get("tags", [])
-                console.print(f"[bold]{data['title']}[/]  [dim]({data['id']})[/]")
-                console.print(f"[dim]Status: {data['status']} | Tags: {', '.join(tags)}[/]")
+                console.print(f"[bold]{escape(data['title'])}[/]  [dim]({escape(data['id'])})[/]")
+                console.print(f"[dim]Status: {escape(data['status'])} | Tags: {escape(', '.join(tags))}[/]")
                 console.print()
                 from rich.markdown import Markdown
                 console.print(Markdown(data.get("body", "")))
@@ -377,14 +381,14 @@ def note_show(
     else:
         for data in notes:
             tags = data.get("tags", [])
-            console.print(f"\n[bold]{data['title']}[/]  [dim]({data['id']})[/]")
-            console.print(f"[dim]Status: {data['status']} | Tags: {', '.join(tags)}[/]")
+            console.print(f"\n[bold]{escape(data['title'])}[/]  [dim]({escape(data['id'])})[/]")
+            console.print(f"[dim]Status: {escape(data['status'])} | Tags: {escape(', '.join(tags))}[/]")
             if not meta:
                 console.print()
                 from rich.markdown import Markdown
                 console.print(Markdown(data.get("body", "")))
         if not_found:
-            console.print(f"\n[red]Not found:[/] {', '.join(not_found)}")
+            console.print(f"\n[red]Not found:[/] {escape(', '.join(not_found))}")
 
 
 @app.command("list")
@@ -412,7 +416,7 @@ def note_list(
             if json_output:
                 output(error(f"Invalid --tier '{tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if content_type is not None:
         try:
@@ -422,7 +426,7 @@ def note_list(
             if json_output:
                 output(error(f"Invalid --content-type '{content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -463,14 +467,14 @@ def note_list(
     effective_limit = 999999 if all_notes else limit
     rows = vault.db.execute(
         f"""SELECT n.*,
-            (SELECT GROUP_CONCAT(t.tag, ',') FROM tags t WHERE t.note_id = n.id) as tag_list
+            (SELECT json_group_array(t.tag) FROM tags t WHERE t.note_id = n.id) as tag_list
         FROM notes n WHERE {where} ORDER BY {order} LIMIT ?""",
         [*params, effective_limit],
     ).fetchall()
 
     notes = []
     for row in rows:
-        tag_list = row["tag_list"].split(",") if row["tag_list"] else []
+        tag_list = json.loads(row["tag_list"]) if row["tag_list"] else []
         notes.append({
             "id": row["id"],
             "title": row["title"],
@@ -506,7 +510,7 @@ def note_edit(
 
     row = vault.db.execute("SELECT path FROM notes WHERE id = ?", (note_id,)).fetchone()
     if not row:
-        console.print(f"[red]Not found:[/] {note_id}")
+        console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     _open_in_editor(vault.root / row["path"])
@@ -529,7 +533,11 @@ def note_update(
     """Update frontmatter fields on a single note."""
     from datetime import datetime
 
-    from hyperresearch.core.frontmatter import parse_frontmatter, serialize_frontmatter
+    from hyperresearch.core.frontmatter import (
+        FrontmatterBrokenError,
+        parse_frontmatter_for_update,
+        serialize_frontmatter,
+    )
     from hyperresearch.core.sync import compute_sync_plan, execute_sync
     from hyperresearch.models.note import ContentType, NoteStatus, Tier
 
@@ -542,7 +550,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --status '{set_status}'. Must be one of: {valid}", "INVALID_STATUS"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --status '{set_status}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --status '{escape(set_status)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if set_tier is not None:
         try:
@@ -552,7 +560,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --tier '{set_tier}'. Must be one of: {valid}", "INVALID_TIER"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --tier '{set_tier}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --tier '{escape(set_tier)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
     if set_content_type is not None:
         try:
@@ -562,7 +570,7 @@ def note_update(
             if json_output:
                 output(error(f"Invalid --content-type '{set_content_type}'. Must be one of: {valid}", "INVALID_CONTENT_TYPE"), json_mode=True)
             else:
-                console.print(f"[red]Invalid --content-type '{set_content_type}'.[/] Must be one of: {valid}")
+                console.print(f"[red]Invalid --content-type '{escape(set_content_type)}'.[/] Must be one of: {valid}")
             raise typer.Exit(1)
 
     vault = discover_vault(json_output)
@@ -573,12 +581,19 @@ def note_update(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     file_path = vault.root / row["path"]
     content = file_path.read_text(encoding="utf-8-sig")
-    meta, body = parse_frontmatter(content)
+    try:
+        meta, body = parse_frontmatter_for_update(content)
+    except FrontmatterBrokenError as e:
+        if json_output:
+            output(error(str(e), "FRONTMATTER_BROKEN"), json_mode=True)
+        else:
+            console.print(f"[red]{escape(str(e))}[/]")
+        raise typer.Exit(1)
 
     changed = []
     if set_status:
@@ -629,7 +644,7 @@ def note_update(
     if json_output:
         output(success({"id": note_id, "changed": changed}, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Updated {note_id}:[/] {', '.join(changed)}")
+        console.print(f"[green]Updated {escape(note_id)}:[/] {escape(', '.join(changed))}")
 
 
 @app.command("mv")
@@ -663,7 +678,7 @@ def note_mv(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     old_file = vault.root / row["path"]
@@ -687,7 +702,7 @@ def note_mv(
         if json_output:
             output(error(msg, "OUTSIDE_SYNCED_TREE"), json_mode=True)
         else:
-            console.print(f"[red]{msg}[/]")
+            console.print(f"[red]{escape(msg)}[/]")
         raise typer.Exit(1)
     # samefile: on a case-insensitive filesystem a case-only rename
     # (n-f -> N-F.md) "exists" because it is the note's own file.
@@ -696,7 +711,7 @@ def note_mv(
         if json_output:
             output(error(msg, "DESTINATION_EXISTS"), json_mode=True)
         else:
-            console.print(f"[red]{msg}[/]")
+            console.print(f"[red]{escape(msg)}[/]")
         raise typer.Exit(1)
     # Resolve the parent only: on a case-insensitive filesystem resolve() on the
     # file itself returns the old spelling during a case-only rename.
@@ -714,7 +729,7 @@ def note_mv(
     if json_output:
         output(success({"old_path": row["path"], "new_path": rel_new}, vault=str(vault.root)), json_mode=True)
     else:
-        console.print(f"[green]Moved:[/] {row['path']} → {rel_new}")
+        console.print(f"[green]Moved:[/] {escape(row['path'])} → {escape(rel_new)}")
 
 
 def _file_identity(path: Path) -> tuple | None:
@@ -771,7 +786,7 @@ def note_rm(
         if json_output:
             output(error(f"Note not found: {note_id}", "NOT_FOUND"), json_mode=True)
         else:
-            console.print(f"[red]Not found:[/] {note_id}")
+            console.print(f"[red]Not found:[/] {escape(note_id)}")
         raise typer.Exit(1)
 
     file_path = vault.root / row["path"]
@@ -914,11 +929,14 @@ def note_rm(
     if file_path.exists():
         file_path.unlink()
 
-    # Re-sync to update DB
-    from hyperresearch.core.sync import compute_sync_plan, execute_sync
+    from hyperresearch.core.sync import _delete_note_from_db, compute_sync_plan, execute_sync
+
+    # Delete by id before sync can mistake an unindexed copy for a move.
+    with vault.db:
+        _delete_note_from_db(vault.db, note_id)
 
     plan = compute_sync_plan(vault)
-    execute_sync(vault, plan)
+    execute_sync(vault, plan, deleted_ids={note_id})
 
     payload: dict = {"deleted": note_id}
     if removed_raw:
@@ -931,13 +949,13 @@ def note_rm(
     if json_output:
         output(success(payload, vault=str(vault.root)), json_mode=True)
     else:
-        msg = f"[red]Deleted:[/] {note_id}"
+        msg = f"[red]Deleted:[/] {escape(note_id)}"
         if removed_raw:
-            msg += f"\n  raw: {removed_raw}"
+            msg += f"\n  raw: {escape(removed_raw)}"
         if removed_assets:
             msg += f"\n  assets: {len(removed_assets)} file(s)"
         if assets_not_removed:
-            msg += "\n  assets not removed: " + "; ".join(assets_not_removed)
+            msg += "\n  assets not removed: " + escape("; ".join(assets_not_removed))
         console.print(msg)
 
 
