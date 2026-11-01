@@ -108,12 +108,23 @@ def _strip_inline_code(text: str, keep_length: bool = False) -> str:
     for i, (a, b) in enumerate(runs):
         by_len.setdefault(b - a, []).append(i)
     cursor = dict.fromkeys(by_len, 0)
+    wiki_spans = [m.span() for m in WIKI_LINK_RE.finditer(text)]
+    wiki_index = 0
 
     out: list[str] = []
     pos = 0
     i = 0
     while i < len(runs):
         a, b = runs[i]
+        while wiki_index < len(wiki_spans) and wiki_spans[wiki_index][1] <= a:
+            wiki_index += 1
+        if wiki_index < len(wiki_spans):
+            start, end = wiki_spans[wiki_index]
+            # A wiki ref opened in prose owns its backticks. A ref inside
+            # an outer code span is still consumed with that code span.
+            if pos <= start < a < end:
+                i += 1
+                continue
         n = b - a
         group = by_len[n]
         k = cursor[n]
@@ -248,7 +259,10 @@ def is_valid_wiki_link_target(ref: str, *, allow_footnotes: bool = False) -> boo
         return False
     if _TEMPLATE_PLACEHOLDER_RE.search(ref):
         return False
-    if _SHELL_FRAGMENT_CHARS_RE.search(ref):
+    # Known titles and aliases may contain backticks, but shell syntax
+    # must still be rejected even when citation heuristics are bypassed.
+    shell_ref = ref.replace("`", "") if allow_footnotes else ref
+    if _SHELL_FRAGMENT_CHARS_RE.search(shell_ref):
         return False
     # Leading '-' or '!' is option/negation syntax (`-n "$kernel"`,
     # `! -f x`), not a reference. Mid-string they stay legal (titles).
