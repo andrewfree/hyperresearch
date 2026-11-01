@@ -4,20 +4,20 @@
 
 [andrewfree/hyperresearch](https://github.com/andrewfree/hyperresearch) is a maintained fork of [jordan-gibbs/hyperresearch](https://github.com/jordan-gibbs/hyperresearch). It carries bug fixes while upstream reviews them. Hyperresearch is a Python CLI for research vaults: markdown notes are the source of truth, and SQLite is a derived cache.
 
-The sweep starts from upstream `aece65f`, v0.13.0. The nine high-severity fixes through `7644d5e` were also submitted as [upstream PR #187](https://github.com/jordan-gibbs/hyperresearch/pull/187), open at this guide's baseline. Their existing entries remain in the changelog's `Fixed` list.
+The sweep starts from upstream `aece65f`, v0.13.0. The high-severity fix series through `7644d5e` was also submitted as [upstream PR #187](https://github.com/jordan-gibbs/hyperresearch/pull/187), open at this guide's baseline. Its existing entries remain in the changelog's `Fixed` list.
 
-Wave 1, fork PRs #2 through #8, added 79 commits addressing medium- and low-severity findings. Claude Opus 5.5 agents implemented and reviewed them, GPT-6 Astra reviewed sync-vault, and GPT-6.1 Sol supplied a Python 3.11 compatibility fix. Wave 2, fork PR #9 and the chain A PR #10, was implemented by GPT-6.1 Sol and reviewed by GPT-6 Astra through the Codex CLI. The [fork changelog](CHANGELOG.md#fixed-in-this-fork-andrewfreehyperresearch) records the resulting user-visible fixes, including review corrections.
+Wave 1, fork PRs #2 through #8, added 80 non-merge commits addressing medium- and low-severity findings. Claude Opus 5.5 agents implemented and reviewed them, GPT-6 Astra reviewed sync-vault, and GPT-6.1 Sol supplied a Python 3.11 compatibility fix. Wave 2, fork PRs #9 and #10, contains implementation and review corrections by GPT-6.1 Sol and GPT-6 Astra through the Codex CLI. The [fork changelog](CHANGELOG.md#fixed-in-this-fork-andrewfreehyperresearch) records the resulting user-visible fixes, including review corrections.
 
 At a glance, the fixes cover note preservation, sync and moves, search, links and graph reports, the viewer and MCP, installation, run state and fetching. Compatibility changes to account for are:
 
-- Remote viewer images are blocked by default. To enable them, set `allow_remote_images = true` under `[viewer]` in the vault's `.hyperresearch/config.toml`. Blocked images become links, and rendered images suppress referrers.
+- Remote viewer images are blocked by default. To enable them, set `allow_remote_images = true` under `[viewer]` in the vault's `.hyperresearch/config.toml`. Edit the TOML file directly; `config set` does not expose `viewer.allow_remote_images`. Blocked images become links, and rendered images suppress referrers.
 - `a OR NOT b` returns `BAD_QUERY` instead of silently becoming a narrower search. A leading `NOT` with an operand is rejected; `a AND NOT b` and quoted operator text remain supported.
-- A punctuation-only search returns `BAD_QUERY` instead of an empty successful result.
+- A punctuation-only search returns `BAD_QUERY` instead of an empty successful result, as established in the earlier high-severity fixes. Mixed Boolean queries now discard operators left dangling by removed punctuation, so `attention AND -` searches for `attention`.
 - Glued terms match adjacent split forms: `gpt4o` matches `GPT-4o`, while plain `3d` no longer expands to `3-D`.
 - Generated index links no longer count toward citation, backlink, connectivity or promotion decisions.
 - Blank `link --tag` or `--note` values return `NO_INPUT` instead of selecting the whole vault.
 - `lint --fix` is removed because it never changed anything; an unknown `--rule` now returns `UNKNOWN_RULE`.
-- Non-slug tag index filenames move to `_tag-<slug>.md`, with digest names for collisions. Ordinary slug tags keep their filenames.
+- The earlier high-severity fixes moved non-slug tag index filenames to `_tag-<slug>.md`, with digest names for collisions. Ordinary slug tags keep their filenames.
 - The viewer accepts only `127.0.0.1`, `localhost` or `[::1]` Host names, optionally with a port; other hosts receive 403.
 - Run tags must use lowercase letters; a manifest with a different stored tag is refused.
 - Escalation ingest accepts only claimed items; queued, human-waiting and already resolved items are refused.
@@ -40,9 +40,10 @@ Check the checkout before using the procedures below:
 ```sh
 git remote -v
 git status --short
+git branch -vv
 ```
 
-Start with a clean working tree. Push fork branches to `fork` and always name the repository in GitHub CLI and local-ci commands, since `origin` points upstream. The commands below are maintainer procedures for a network-enabled checkout.
+Confirm that local `main` tracks `fork/main`; the procedures below assume this layout. Review clones and fresh clones may use different remote names. Start with a clean working tree. Push fork branches to `fork` and always name the repository in GitHub CLI and local-ci commands, since `origin` points upstream. The commands below are maintainer procedures for a network-enabled checkout.
 
 ## CI
 
