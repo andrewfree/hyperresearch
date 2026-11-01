@@ -59,6 +59,10 @@ def _attr_url(url: str) -> str:
 def _link(url: str, text: str) -> str:
     if not _is_safe_url(url):
         return text  # keep the label, drop the link
+    # A blocked image inside a link has already become an anchor. Keep the
+    # outer destination without nesting anchors, which browsers split apart.
+    if "<a " in text:
+        text = re.sub(r'<a href="[^"]*">|</a>', "", text)
     return f'<a href="{_attr_url(url)}">{text}</a>'
 
 
