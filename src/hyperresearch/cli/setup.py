@@ -349,7 +349,7 @@ def _ensure_browser() -> None:
         import importlib.util
         import subprocess
 
-        from hyperresearch.cli._browser import run_installer
+        from hyperresearch.cli._browser import InstallerCleanupError, run_installer
 
         installers = []
         if importlib.util.find_spec("patchright") is not None:
@@ -359,12 +359,13 @@ def _ensure_browser() -> None:
             try:
                 run_installer([sys.executable, "-m", mod, "install", "chromium"])
                 console.print("  [green]Chromium installed[/]")
+                return
+            except InstallerCleanupError:
                 break
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
                 continue
-        else:
-            console.print(
-                "  [red]Could not install browser automatically.[/]\n"
-                "  Run: playwright install chromium\n"
-                "  (stealth adapter setups need: python -m patchright install chromium)"
-            )
+        console.print(
+            "  [red]Could not install browser automatically.[/]\n"
+            "  Run: playwright install chromium\n"
+            "  (stealth adapter setups need: python -m patchright install chromium)"
+        )

@@ -85,9 +85,18 @@ def test_load_wraps_config_read_errors(tmp_path, kind, deny_file_reads):
         with pytest.raises(ConfigInvalidError) as caught:
             VaultConfig.load(config_path)
         assert str(config_path) in str(caught.value)
-        assert os.strerror(expected_errno) in str(caught.value)
-        assert isinstance(caught.value.__cause__, OSError)
-        assert caught.value.__cause__.errno == expected_errno
+        cause = caught.value.__cause__
+        assert isinstance(cause, OSError)
+        if sys.platform == "win32":
+            # Windows file errors carry their own message, not the CRT errno text.
+            assert cause.strerror in str(caught.value)
+            if kind == "symlink-loop":
+                assert cause.winerror == 1921  # ERROR_CANT_RESOLVE_FILENAME
+            else:
+                assert cause.errno == expected_errno
+        else:
+            assert os.strerror(expected_errno) in str(caught.value)
+            assert cause.errno == expected_errno
     finally:
         if kind == "permission":
             config_path.chmod(0o600)

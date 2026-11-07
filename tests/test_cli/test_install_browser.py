@@ -10,9 +10,11 @@ order without touching the network or any real browser registry.
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 import sys
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 
@@ -119,3 +121,50 @@ def test_browser_timeout_reports_manual_install_advice(tmp_vault, monkeypatch, c
     assert "Could not install browser automatically" in output
     assert "playwright install chromium" in output
     assert "python -m patchright install chromium" in output
+
+
+@pytest.mark.parametrize("command", ["install", "install-json", "setup"])
+def test_failed_tree_cleanup_reports_failure_without_fallback(
+        tmp_vault, monkeypatch, capsys, command):
+    from hyperresearch.cli import _browser
+
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
+    monkeypatch.setattr(_browser, "_WINDOWS", True)
+    process = Mock(pid=4321)
+    process.wait.side_effect = subprocess.TimeoutExpired("installer", 300)
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(_browser.subprocess, "Popen", popen)
+    taskkill = Mock(side_effect=subprocess.CalledProcessError(1, "taskkill"))
+    monkeypatch.setattr(_browser.subprocess, "run", taskkill)
+
+    if command.startswith("install"):
+        from typer.testing import CliRunner
+
+        from hyperresearch.cli import app
+
+        args = ["install", str(tmp_vault.root)]
+        if command == "install-json":
+            args.append("--json")
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.exception
+        output = result.output
+        if command == "install-json":
+            envelope = json.loads(output)
+            assert envelope["data"]["crawl4ai"] == "browser_failed"
+            assert envelope["ok"] is True
+        else:
+            assert "crawl4ai:" in output
+            assert "set as default provider" in output
+            assert output.index("crawl4ai:") < output.index("Could not install browser")
+        assert tmp_vault.config.load(tmp_vault.config_path).web_provider == "crawl4ai"
+    else:
+        importlib.import_module("hyperresearch.cli.setup")._ensure_browser()
+        output = capsys.readouterr().out
+    if command != "install-json":
+        assert "Could not install browser automatically" in output
+        assert "playwright install chromium" in output
+        assert "python -m patchright install chromium" in output
+        assert "browser ready" not in output.lower()
+    assert popen.call_count == 1, "an unconfirmed cleanup must not start the fallback"
+    assert popen.call_args.args[0][2] == "patchright"
+    taskkill.assert_called_once()

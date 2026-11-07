@@ -490,7 +490,7 @@ def _setup_crawl4ai(vault) -> str:
     import subprocess
     import sys
 
-    from hyperresearch.cli._browser import run_installer
+    from hyperresearch.cli._browser import InstallerCleanupError, run_installer
 
     installers = []
     if importlib.util.find_spec("patchright") is not None:
@@ -500,6 +500,8 @@ def _setup_crawl4ai(vault) -> str:
         try:
             run_installer([sys.executable, "-m", mod, "install", "chromium"])
             return "browser_installed"
+        except InstallerCleanupError:
+            break
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             continue
     return "browser_failed"  # Best effort; user can install manually.
