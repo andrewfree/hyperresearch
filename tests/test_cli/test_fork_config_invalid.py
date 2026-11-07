@@ -22,6 +22,8 @@ BAD_CONFIGS = [
     pytest.param(b"[viewer\nallow_remote_images = true\n", "line 1, column 8", id="toml"),
     pytest.param(b"# comment\n\xff", "UTF-8", id="utf8"),
     pytest.param(b"vault = 1\n", "[vault] must be a table", id="section"),
+    pytest.param(b"[profile]\nmine = 3\n", "[profile.mine] must be a table", id="profile-entry"),
+    pytest.param(b"profile.mine = 1\n", "[profile.mine] must be a table", id="dotted-profile-entry"),
 ]
 
 
@@ -163,3 +165,112 @@ def test_default_and_valid_configs_work_at_discovery(tmp_vault, monkeypatch, con
         result = runner.invoke(app, args)
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout)["ok"] is True
+
+
+@pytest.fixture(params=["directory", "permission"])
+def unreadable_config(tmp_vault, request):
+    import errno
+    import os
+
+    config_path = tmp_vault.config_path
+    if request.param == "directory":
+        config_path.unlink()
+        config_path.mkdir()
+        detail = os.strerror(errno.EISDIR)
+    else:
+        config_path.chmod(0)
+        detail = os.strerror(errno.EACCES)
+    try:
+        yield config_path, detail
+    finally:
+        if request.param == "permission":
+            config_path.chmod(0o600)
+
+
+@pytest.mark.parametrize("command", [["status"], ["profile", "show", "full"]])
+@pytest.mark.parametrize("mode", [[], ["--json"]], ids=["human", "json"])
+def test_unreadable_config_cli(tmp_vault, monkeypatch, unreadable_config, command, mode):
+    monkeypatch.chdir(tmp_vault.root)
+    config_path, detail = unreadable_config
+    result = runner.invoke(app, [*command, *mode])
+    assert result.exit_code == 1, result.output
+    if mode:
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is False
+        assert payload["error_code"] == "CONFIG_INVALID"
+        assert result.stderr == ""
+        message = payload["error"]
+    else:
+        assert result.stdout == ""
+        assert len(result.stderr.splitlines()) == 1
+        message = result.stderr
+    assert_message(message, config_path, detail)
+
+
+@pytest.mark.parametrize("platform", ["claude", "codex"])
+def test_hook_install_refuses_unreadable_config(tmp_vault, unreadable_config, platform):
+    from hyperresearch.core.hooks import HookRefusal, install_hooks
+
+    config_path, detail = unreadable_config
+    actions = install_hooks(tmp_vault.root, platform=platform)
+    assert len(actions) == 1
+    assert isinstance(actions[0], HookRefusal)
+    assert_message(actions[0], config_path, detail)
+    assert not (tmp_vault.root / ".claude").exists()
+    assert not (tmp_vault.root / ".codex").exists()
+
+
+@pytest.mark.parametrize("tool,args", [("vault_status", {}), ("search_notes", {"query": "foo"})])
+def test_mcp_client_reports_config_error_and_recovers(tmp_vault, monkeypatch, tool, args):
+    import os
+    import sys
+
+    import anyio
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    monkeypatch.chdir(tmp_vault.root)
+    original = tmp_vault.config_path.read_bytes()
+    tmp_vault.config_path.write_bytes(b"[viewer\n")
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from hyperresearch.mcp.server import server; server.run()"],
+        env=os.environ.copy(),
+    )
+
+    async def call():
+        with anyio.fail_after(30):
+            async with (
+                stdio_client(params) as (read, write),
+                ClientSession(read, write) as client,
+            ):
+                await client.initialize()
+                result = await client.call_tool(tool, args)
+                assert result.isError is True
+                assert len(result.content) == 1
+                assert_message(result.content[0].text, tmp_vault.config_path, "line 1, column 8")
+                tmp_vault.config_path.write_bytes(original)
+                assert (await client.call_tool(tool, args)).isError is False
+
+    asyncio.run(call())
+
+
+def test_mcp_protocol_reports_unreadable_config(tmp_vault, monkeypatch, unreadable_config):
+    from mcp import types
+
+    from hyperresearch.mcp import server as mcp
+
+    monkeypatch.chdir(tmp_vault.root)
+    monkeypatch.setattr(mcp, "_vault", None)
+    config_path, detail = unreadable_config
+
+    async def call():
+        handler = mcp.server._mcp_server.request_handlers[types.CallToolRequest]
+        response = await handler(types.CallToolRequest(
+            method="tools/call", params=types.CallToolRequestParams(name="vault_status", arguments={}),
+        ))
+        return response.root
+
+    result = asyncio.run(call())
+    assert result.isError is True
+    assert_message(result.content[0].text, config_path, detail)
