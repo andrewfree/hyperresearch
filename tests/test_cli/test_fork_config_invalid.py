@@ -167,6 +167,23 @@ def test_default_and_valid_configs_work_at_discovery(tmp_vault, monkeypatch, con
         assert json.loads(result.stdout)["ok"] is True
 
 
+def test_dangling_config_symlink_through_regular_file_status_json(tmp_vault, monkeypatch):
+    monkeypatch.chdir(tmp_vault.root)
+    shared = tmp_vault.root / "shared"
+    shared.write_text("regular file", encoding="utf-8")
+    tmp_vault.config_path.unlink()
+    tmp_vault.config_path.symlink_to(shared / "config.toml")
+    assert not tmp_vault.config_path.exists()
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["ok"] is True
+    assert result.stderr == ""
+    assert tmp_vault.config_path.is_symlink()
+    assert shared.read_text(encoding="utf-8") == "regular file"
+
+
 @pytest.fixture(params=["directory", "permission"])
 def unreadable_config(tmp_vault, request):
     import errno

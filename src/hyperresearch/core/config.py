@@ -294,7 +294,7 @@ class VaultConfig:
     def load(cls, config_path: Path) -> VaultConfig:
         try:
             raw = config_path.read_bytes()
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             return cls()
         except OSError as exc:
             raise ConfigInvalidError(config_path, str(exc)) from exc
