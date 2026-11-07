@@ -29,9 +29,10 @@ def run_installer(command: list[str], *, timeout: float = 300) -> None:
     try:
         if not _WINDOWS and threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGHUP):
-                previous_handlers[sig] = signal.signal(sig, interrupt)
+                if signal.getsignal(sig) != signal.SIG_IGN:
+                    previous_handlers[sig] = signal.signal(sig, interrupt)
         returncode = process.wait(timeout=timeout)
-    except BaseException:
+    except BaseException as wait_error:
         if _WINDOWS:
             try:
                 subprocess.run(
@@ -40,12 +41,14 @@ def run_installer(command: list[str], *, timeout: float = 300) -> None:
                     timeout=30,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
+                if not isinstance(wait_error, subprocess.TimeoutExpired):
+                    raise wait_error from exc
                 # Do not start a fallback while the old driver may still run.
                 raise InstallerCleanupError("Could not stop the browser installer tree") from exc
         else:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         process.wait()
         raise

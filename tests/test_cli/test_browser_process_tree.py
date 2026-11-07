@@ -209,6 +209,51 @@ def test_failed_windows_tree_cleanup_does_not_report_retryable_timeout(monkeypat
         _browser.run_installer(["installer"])
 
 
+@pytest.mark.parametrize("ignored_signal", ["SIGTERM", "SIGHUP"])
+def test_installer_preserves_ignored_signals(monkeypatch, ignored_signal):
+    if sys.platform == "win32":
+        pytest.skip("POSIX signal dispositions")
+    from hyperresearch.cli import _browser
+
+    sig = getattr(signal, ignored_signal)
+    previous = signal.signal(sig, signal.SIG_IGN)
+    process = Mock()
+
+    def wait(timeout):
+        assert signal.getsignal(sig) == signal.SIG_IGN
+        os.kill(os.getpid(), sig)
+        return 0
+
+    process.wait.side_effect = wait
+    monkeypatch.setattr(_browser.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(_browser.os, "killpg", Mock())
+    try:
+        _browser.run_installer(["installer"])
+        assert signal.getsignal(sig) == signal.SIG_IGN
+    finally:
+        signal.signal(sig, previous)
+
+
+@pytest.mark.parametrize("kill_error", [PermissionError, ProcessLookupError])
+@pytest.mark.parametrize("wait_error", [subprocess.TimeoutExpired, KeyboardInterrupt, SystemExit])
+def test_gone_posix_group_is_reaped_without_masking_wait_error(monkeypatch, kill_error, wait_error):
+    if sys.platform == "win32":
+        pytest.skip("POSIX process groups")
+    from hyperresearch.cli import _browser
+
+    error = subprocess.TimeoutExpired("installer", 300) if wait_error is subprocess.TimeoutExpired else wait_error(143)
+    process = Mock(pid=4321)
+    process.wait.side_effect = [error, 0]
+    monkeypatch.setattr(_browser.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(_browser.os, "killpg", Mock(side_effect=kill_error()))
+    with pytest.raises(wait_error) as caught:
+        _browser.run_installer(["installer"])
+    assert caught.value is error
+    assert process.wait.call_count == 2
+    assert process.wait.call_args.args == ()
+    assert process.wait.call_args.kwargs == {}
+
+
 def test_installer_works_from_worker_thread():
     from concurrent.futures import ThreadPoolExecutor
 

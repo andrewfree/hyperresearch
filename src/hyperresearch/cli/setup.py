@@ -44,7 +44,18 @@ def setup(
             cmd += ["--profile", gear]
         if json_output:
             cmd.append("--json")
-        raise typer.Exit(subprocess.call(cmd))
+        process = subprocess.Popen(cmd)
+        try:
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            # Let install finish stopping its browser tree before exiting.
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise typer.Exit(130)
+        raise typer.Exit(returncode)
 
     root = Path(path).resolve()
 

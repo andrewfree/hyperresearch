@@ -168,3 +168,50 @@ def test_failed_tree_cleanup_reports_failure_without_fallback(
     assert popen.call_count == 1, "an unconfirmed cleanup must not start the fallback"
     assert popen.call_args.args[0][2] == "patchright"
     taskkill.assert_called_once()
+
+
+@pytest.mark.parametrize("command", ["install", "install-json", "setup"])
+@pytest.mark.parametrize("cleanup_error", [OSError, subprocess.CalledProcessError])
+def test_failed_windows_cleanup_does_not_swallow_ctrl_c(
+        tmp_vault, monkeypatch, command, cleanup_error):
+    from hyperresearch.cli import _browser
+
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
+    monkeypatch.setattr(_browser, "_WINDOWS", True)
+    process = Mock(pid=4321)
+    process.wait.side_effect = KeyboardInterrupt
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(_browser.subprocess, "Popen", popen)
+    error = cleanup_error(1, "taskkill")
+    monkeypatch.setattr(_browser.subprocess, "run", Mock(side_effect=error))
+    if command == "setup":
+        with pytest.raises(KeyboardInterrupt):
+            importlib.import_module("hyperresearch.cli.setup")._ensure_browser()
+    else:
+        from typer.testing import CliRunner
+
+        from hyperresearch.cli import app
+
+        args = ["install", str(tmp_vault.root)]
+        if command == "install-json":
+            args.append("--json")
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 130, result.output
+        assert "browser_failed" not in result.output
+        assert "INSTALL_ERROR" not in result.output
+    assert popen.call_count == 1
+
+
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit, RuntimeError])
+def test_failed_windows_cleanup_preserves_original_exception(monkeypatch, error_type):
+    from hyperresearch.cli import _browser
+
+    monkeypatch.setattr(_browser, "_WINDOWS", True)
+    error = error_type("interrupted wait")
+    process = Mock(pid=4321)
+    process.wait.side_effect = error
+    monkeypatch.setattr(_browser.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(_browser.subprocess, "run", Mock(side_effect=OSError("taskkill failed")))
+    with pytest.raises(error_type) as caught:
+        _browser.run_installer(["installer"])
+    assert caught.value is error

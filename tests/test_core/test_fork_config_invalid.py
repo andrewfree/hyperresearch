@@ -72,7 +72,8 @@ def test_load_wraps_config_read_errors(tmp_path, kind, deny_file_reads):
         expected_errno = errno.EACCES if sys.platform == "win32" else errno.EISDIR
     elif kind == "symlink-loop":
         config_path.symlink_to(config_path)
-        expected_errno = errno.ELOOP
+        # Measured with read_bytes on Windows 11, Python 3.11.17: EINVAL, no winerror.
+        expected_errno = errno.EINVAL if sys.platform == "win32" else errno.ELOOP
     else:
         config_path.write_text("[vault]\n", encoding="utf-8")
         if sys.platform == "win32":
@@ -90,10 +91,7 @@ def test_load_wraps_config_read_errors(tmp_path, kind, deny_file_reads):
         if sys.platform == "win32":
             # Windows file errors carry their own message, not the CRT errno text.
             assert cause.strerror in str(caught.value)
-            if kind == "symlink-loop":
-                assert cause.winerror == 1921  # ERROR_CANT_RESOLVE_FILENAME
-            else:
-                assert cause.errno == expected_errno
+            assert cause.errno == expected_errno
         else:
             assert os.strerror(expected_errno) in str(caught.value)
             assert cause.errno == expected_errno
