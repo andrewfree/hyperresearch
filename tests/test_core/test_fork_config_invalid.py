@@ -49,3 +49,9 @@ def test_valid_config_still_loads(tmp_path):
     config = VaultConfig.load(config_path)
     assert config.name == "My Vault"
     assert config.viewer.allow_remote_images is True
+
+
+def test_empty_config_still_means_defaults(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_bytes(b"")
+    assert VaultConfig.load(config_path) == VaultConfig()

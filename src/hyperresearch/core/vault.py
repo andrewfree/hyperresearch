@@ -205,7 +205,11 @@ class Vault:
         current = (start or Path.cwd()).resolve()
         while True:
             if (current / HYPERRESEARCH_DIR).is_dir():
-                return Vault(current)
+                vault = Vault(current)
+                # Every vault command must reject unreadable settings, even
+                # database-only commands that never otherwise access config.
+                vault._config = VaultConfig.load(vault.config_path)
+                return vault
             parent = current.parent
             if parent == current:
                 break
