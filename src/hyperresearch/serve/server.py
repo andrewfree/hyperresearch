@@ -647,9 +647,8 @@ class HyperresearchServer(ThreadingHTTPServer):
     Even a plain loopback bind, or one with SO_EXCLUSIVEADDRUSE, can succeed
     beside an IPv4 or dual-stack IPv6 wildcard listener. Windows therefore
     needs separate plain-bind probes for both wildcards. Missing IPv6 support
-    must not block IPv4 serving. An occupied IPv6 wildcard is conservatively
-    refused even if its listener is IPv6-only; a refused TCP connection cannot
-    distinguish that from a dual-stack listener with a full queue.
+    must not block IPv4 serving. On Windows, the dual-stack probe can bind
+    beside an IPv6-only listener, which does not receive IPv4 traffic.
     An OS-chosen port (port=0) needs no probe.
     """
 

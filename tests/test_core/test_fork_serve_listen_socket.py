@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import socket
-import sys
 from http.client import HTTPConnection
 from threading import Thread
 
@@ -63,8 +62,7 @@ def test_port_held_by_a_wildcard_listener_is_refused(make_listener):
 
 
 def test_ipv6_only_listener_does_not_block_the_port():
-    """POSIX can keep using IPv4 beside an IPv6-only wildcard. Windows' dual
-    wildcard guard conservatively refuses any occupied IPv6 wildcard."""
+    """An IPv6-only wildcard never receives our IPv4 loopback traffic."""
     for _ in range(10):
         with _ipv6_listener(1) as other:
             port = other.getsockname()[1]
@@ -78,13 +76,8 @@ def test_ipv6_only_listener_does_not_block_the_port():
                     continue
             assert not _answers_loopback(port), "premise: the other listener ignores 127.0.0.1"
 
-            if sys.platform == "win32":
-                with pytest.raises(OSError) as exc:
-                    HyperresearchServer(("127.0.0.1", port), HyperresearchHandler)
-                assert exc.value.errno == errno.EADDRINUSE
-            else:
-                with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
-                    assert server.server_address == ("127.0.0.1", port)
+            with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
+                assert server.server_address == ("127.0.0.1", port)
             return
     pytest.fail("could not find a port free in both IPv4 and IPv6")
 

@@ -349,21 +349,15 @@ def _ensure_browser() -> None:
         import importlib.util
         import subprocess
 
+        from hyperresearch.cli._browser import run_installer
+
         installers = []
         if importlib.util.find_spec("patchright") is not None:
             installers.append("patchright")
         installers.append("playwright")
         for mod in installers:
             try:
-                subprocess.run(
-                    [sys.executable, "-m", mod, "install", "chromium"],
-                    check=True,
-                    # A Node child inherits output handles. Captured pipes can
-                    # keep Windows timeout cleanup waiting after its parent dies.
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=300,
-                )
+                run_installer([sys.executable, "-m", mod, "install", "chromium"])
                 console.print("  [green]Chromium installed[/]")
                 break
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):

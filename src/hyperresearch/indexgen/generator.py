@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 from datetime import UTC, datetime
 
 import yaml
 
+from hyperresearch.core.files import replace_file
 from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 from hyperresearch.models.note import slugify
 
@@ -63,7 +63,7 @@ class IndexGenerator:
         tmp = self.index_dir / f".{filename}.{secrets.token_hex(4)}.tmp"
         try:
             tmp.write_text(content, encoding="utf-8")
-            os.replace(tmp, self.index_dir / filename)
+            replace_file(tmp, self.index_dir / filename)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise

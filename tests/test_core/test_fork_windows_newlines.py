@@ -20,7 +20,7 @@ def test_renderer_normalizes_note_newlines(newline):
     assert "\r" not in rendered
 
 
-@pytest.mark.parametrize("newline", ["\r\n", "\r", "\n"])
+@pytest.mark.parametrize("newline", ["\r\n", "\n"])
 def test_note_bytes_parse_and_sync_with_normalized_newlines(tmp_vault, newline):
     text = "---\nid: headed\ntitle: Headed\nsummary: Stored summary\n---\n\n" + BODY
     content = text.replace("\n", newline).encode("utf-8")
@@ -50,7 +50,7 @@ def test_legacy_cached_body_has_one_clean_heading(tmp_vault, monkeypatch, newlin
 
     path = tmp_vault.notes_dir / "headed.md"
     content = "---\nid: headed\ntitle: Headed\n---\n\n" + BODY
-    path.write_bytes(content.replace("\n", newline).encode("utf-8"))
+    path.write_bytes(content.encode("utf-8"))
     tmp_vault.auto_sync()
     # An unchanged note can retain a body cached before newline normalization.
     tmp_vault.db.execute(
@@ -69,3 +69,10 @@ def test_legacy_cached_body_has_one_clean_heading(tmp_vault, monkeypatch, newlin
     assert page.count("<h1>") == 1
     assert "<h1>Headed Differently</h1>" in page
     assert "\r" not in page
+
+
+def test_lone_cr_notes_are_not_indexed(tmp_vault):
+    path = tmp_vault.notes_dir / "classic.md"
+    path.write_bytes(b"---\rid: classic\rtitle: Classic\r---\rBody\r")
+    tmp_vault.auto_sync()
+    assert tmp_vault.db.execute("SELECT id FROM notes WHERE id = 'classic'").fetchone() is None

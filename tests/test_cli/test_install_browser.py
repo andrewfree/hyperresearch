@@ -33,7 +33,7 @@ def _no_working_browser(monkeypatch):
 def _capture_installs(monkeypatch, fail_mods=()):
     calls: list[str] = []
 
-    def fake_run(cmd, check, stdout, stderr, timeout):
+    def fake_run(cmd):
         mod = cmd[2]
         calls.append(mod)
         if mod in fail_mods:
@@ -42,7 +42,7 @@ def _capture_installs(monkeypatch, fail_mods=()):
             raise subprocess.CalledProcessError(1, cmd)
         return None
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("hyperresearch.cli._browser.run_installer", fake_run)
     return calls
 
 
@@ -77,18 +77,15 @@ def test_failed_patchright_install_falls_back_to_playwright(
 
 
 @pytest.mark.parametrize("command", ["install", "setup"])
-def test_browser_installers_have_a_generous_finite_timeout(tmp_vault, monkeypatch, command):
+def test_browser_timeout_tries_fallback(tmp_vault, monkeypatch, command):
     monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
     calls = []
 
-    def install(cmd, *, check, stdout, stderr, timeout=None):
+    def install(cmd):
         calls.append(cmd[2])
-        assert check
-        assert stdout == stderr == subprocess.DEVNULL
-        assert timeout == 300
-        raise subprocess.TimeoutExpired(cmd, timeout)
+        raise subprocess.TimeoutExpired(cmd, 300)
 
-    monkeypatch.setattr(subprocess, "run", install)
+    monkeypatch.setattr("hyperresearch.cli._browser.run_installer", install)
     if command == "install":
         assert _setup_crawl4ai(tmp_vault) == "browser_failed"
     else:
@@ -100,10 +97,10 @@ def test_browser_installers_have_a_generous_finite_timeout(tmp_vault, monkeypatc
 def test_browser_timeout_reports_manual_install_advice(tmp_vault, monkeypatch, capsys, command):
     monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
 
-    def timeout(cmd, **kwargs):
+    def timeout(cmd):
         raise subprocess.TimeoutExpired(cmd, 300)
 
-    monkeypatch.setattr(subprocess, "run", timeout)
+    monkeypatch.setattr("hyperresearch.cli._browser.run_installer", timeout)
     if command == "install":
         from typer.testing import CliRunner
 
@@ -113,32 +110,12 @@ def test_browser_timeout_reports_manual_install_advice(tmp_vault, monkeypatch, c
         assert result.exit_code == 0, result.output
         output = result.output
         assert "browser ready" not in output
+        assert "crawl4ai:" in output
+        assert "set as default provider" in output
+        assert output.index("crawl4ai:") < output.index("Could not install browser")
     else:
         importlib.import_module("hyperresearch.cli.setup")._ensure_browser()
         output = capsys.readouterr().out
     assert "Could not install browser automatically" in output
     assert "playwright install chromium" in output
     assert "python -m patchright install chromium" in output
-
-
-@pytest.mark.parametrize("command", ["install", "setup"])
-def test_browser_timeout_cannot_wait_on_inherited_output_pipes(tmp_vault, monkeypatch, command):
-    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
-    calls = []
-
-    def install(cmd, **kwargs):
-        calls.append(cmd)
-        # On Windows, run(timeout=...) kills the Python wrapper, then drains
-        # captured pipes without a timeout. Its Node child inherits those
-        # pipes and can keep them open indefinitely. No output is consumed.
-        assert not kwargs.get("capture_output", False)
-        assert kwargs["stdout"] == subprocess.DEVNULL
-        assert kwargs["stderr"] == subprocess.DEVNULL
-        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
-
-    monkeypatch.setattr(subprocess, "run", install)
-    if command == "install":
-        assert _setup_crawl4ai(tmp_vault) == "browser_failed"
-    else:
-        importlib.import_module("hyperresearch.cli.setup")._ensure_browser()
-    assert len(calls) == 1

@@ -409,6 +409,7 @@ def install(
         elif crawl4ai_status == "browser_installed":
             console.print("[green]crawl4ai:[/] browser installed + set as default provider")
         elif crawl4ai_status == "browser_failed":
+            console.print("[yellow]crawl4ai:[/] detected, set as default provider")
             console.print(
                 "  [red]Could not install browser automatically.[/]\n"
                 "  Run: playwright install chromium\n"
@@ -489,21 +490,15 @@ def _setup_crawl4ai(vault) -> str:
     import subprocess
     import sys
 
+    from hyperresearch.cli._browser import run_installer
+
     installers = []
     if importlib.util.find_spec("patchright") is not None:
         installers.append("patchright")
     installers.append("playwright")
     for mod in installers:
         try:
-            subprocess.run(
-                [sys.executable, "-m", mod, "install", "chromium"],
-                check=True,
-                # A Node child inherits output handles. Captured pipes can
-                # keep Windows timeout cleanup waiting after its parent dies.
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=300,
-            )
+            run_installer([sys.executable, "-m", mod, "install", "chromium"])
             return "browser_installed"
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             continue

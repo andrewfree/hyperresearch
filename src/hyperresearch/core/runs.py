@@ -34,6 +34,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from hyperresearch.core.files import replace_file
+
 MANIFEST_VERSION = 1
 MANIFEST_NAME = "run.json"
 
@@ -306,7 +308,7 @@ def _save(vault, vault_tag: str, manifest: dict) -> None:
     tmp = mpath.with_name(f"{MANIFEST_NAME}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(mpath)  # atomic on same filesystem
+        replace_file(tmp, mpath)  # Atomic on the same filesystem.
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
