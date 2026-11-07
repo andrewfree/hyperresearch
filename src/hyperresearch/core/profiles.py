@@ -25,7 +25,6 @@ Profiles are consumed in two places:
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -440,11 +439,9 @@ def _load_user_overlays(config_path: Path | None) -> dict[str, dict]:
     """Read `[profile.<name>]` tables from a config.toml. Missing file → {}."""
     if config_path is None or not config_path.exists():
         return {}
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
-    profiles = data.get("profile", {})
-    if not isinstance(profiles, dict):
-        raise ProfileError("[profile] must be a table of profile tables")
+    from hyperresearch.core.config import VaultConfig
+
+    profiles = VaultConfig.load(config_path).profile_overlays
     out: dict[str, dict] = {}
     for name, table in profiles.items():
         if not isinstance(table, dict):

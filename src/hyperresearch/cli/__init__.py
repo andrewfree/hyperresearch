@@ -2,6 +2,7 @@
 
 import os
 import sys
+from functools import wraps
 
 # Python version guard. The pyproject.toml `requires-python = ">=3.11,<3.15"`
 # normally blocks pip from installing on unsupported versions, but users who
@@ -31,8 +32,43 @@ if sys.platform == "win32":
                 pass
 
 import typer
+from typer.core import TyperGroup
 
 from hyperresearch import __version__
+from hyperresearch.core.config import ConfigInvalidError
+
+
+def _config_error_callback(callback):
+    @wraps(callback)
+    def wrapped(*args, **kwargs):
+        try:
+            return callback(*args, **kwargs)
+        except ConfigInvalidError as exc:
+            from hyperresearch.cli._output import output
+            from hyperresearch.models.output import error
+
+            if kwargs.get("json_output", False):
+                output(error(str(exc), "CONFIG_INVALID"), json_mode=True)
+            else:
+                typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from None
+
+    return wrapped
+
+
+class _ConfigErrorGroup(TyperGroup):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Wrap the built Click callbacks so JSON mode comes from parsed
+        # options, including short-option clusters and literal option values.
+        # This also covers callbacks on nested command groups such as lint.
+        pending = [self]
+        while pending:
+            command = pending.pop()
+            if command.callback is not None:
+                command.callback = _config_error_callback(command.callback)
+            if isinstance(command, TyperGroup):
+                pending.extend(command.commands.values())
 
 
 def _version_callback(value: bool) -> None:
@@ -42,6 +78,7 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(
+    cls=_ConfigErrorGroup,
     name="hyperresearch",
     help="Agent-driven research knowledge base.",
     no_args_is_help=True,

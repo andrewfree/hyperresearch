@@ -9,11 +9,26 @@ from __future__ import annotations
 import json
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
+from hyperresearch.core.config import ConfigInvalidError
 from hyperresearch.core.db import parent_subtree_clause
 from hyperresearch.core.graphrank import NOTE_LINKS_SQL
 
-server = FastMCP("hyperresearch", instructions=(
+
+class _ConfigErrorMCP(FastMCP):
+    async def call_tool(self, name, arguments):
+        try:
+            return await super().call_tool(name, arguments)
+        except ToolError as exc:
+            if not isinstance(exc.__cause__, ConfigInvalidError):
+                raise
+            # MCP 1.6 and later turn exceptions into isError results before
+            # output validation; 1.6 cannot pass through a CallToolResult.
+            raise exc.__cause__ from None
+
+
+server = _ConfigErrorMCP("hyperresearch", instructions=(
     "hyperresearch is an agent-driven research knowledge base. Use these tools to search, read, "
     "and navigate research notes with wiki-links, tags, and summaries. Notes live in the research/ "
     "directory as markdown files with YAML frontmatter. To create or edit notes, write "

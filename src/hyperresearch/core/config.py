@@ -11,6 +11,16 @@ from pathlib import Path
 _BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 
+class ConfigInvalidError(Exception):
+    """A config file that cannot be decoded or read as settings tables."""
+
+    def __init__(self, config_path: Path, reason: str) -> None:
+        super().__init__(
+            f"Invalid config {config_path}: {reason}. "
+            "Fix the file by hand; config set cannot repair a file it cannot read."
+        )
+
+
 @dataclass(frozen=True)
 class FetchSettings:
     """Network/browser behavior for web fetching ([fetch] section)."""
@@ -282,10 +292,43 @@ class VaultConfig:
 
     @classmethod
     def load(cls, config_path: Path) -> VaultConfig:
-        if not config_path.exists():
+        try:
+            raw = config_path.read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
             return cls()
-        with open(config_path, "rb") as f:
-            data = tomllib.load(f)
+        except OSError as exc:
+            raise ConfigInvalidError(config_path, str(exc)) from exc
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            prefix = raw[:exc.start].decode("utf-8")
+            line = prefix.count("\n") + 1
+            column = len(prefix.rsplit("\n", 1)[-1]) + 1
+            raise ConfigInvalidError(
+                config_path, f"invalid UTF-8 at line {line}, column {column}: {exc.reason}",
+            ) from exc
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            reason = str(exc)
+            # Some TOML errors report EOF without a position on both Python 3.11 and 3.14.
+            if reason.endswith("(at end of document)"):
+                line = text.count("\n") + 1
+                column = len(text.rsplit("\n", 1)[-1]) + 1
+                reason = reason.removesuffix("(at end of document)") + f"(at line {line}, column {column})"
+            raise ConfigInvalidError(config_path, reason) from exc
+
+        for section in (
+            "vault", "sync", "index", "search", "web", "pipeline", "profile",
+            "fetch", "junk", "assets", "viewer", "dedup", "lint", "ranking",
+            "embeddings", "chrome", "scholar",
+        ):
+            if section in data and not isinstance(data[section], dict):
+                raise ConfigInvalidError(config_path, f"[{section}] must be a table")
+
+        for name, table in data.get("profile", {}).items():
+            if not isinstance(table, dict):
+                raise ConfigInvalidError(config_path, f"[profile.{cls._toml_key(name)}] must be a table")
 
         vault = data.get("vault", {})
         sync = data.get("sync", {})
