@@ -33,7 +33,7 @@ def _no_working_browser(monkeypatch):
 def _capture_installs(monkeypatch, fail_mods=()):
     calls: list[str] = []
 
-    def fake_run(cmd, check, capture_output, timeout):
+    def fake_run(cmd, check, stdout, stderr, timeout):
         mod = cmd[2]
         calls.append(mod)
         if mod in fail_mods:
@@ -81,9 +81,10 @@ def test_browser_installers_have_a_generous_finite_timeout(tmp_vault, monkeypatc
     monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
     calls = []
 
-    def install(cmd, *, check, capture_output, timeout=None):
+    def install(cmd, *, check, stdout, stderr, timeout=None):
         calls.append(cmd[2])
-        assert check and capture_output
+        assert check
+        assert stdout == stderr == subprocess.DEVNULL
         assert timeout == 300
         raise subprocess.TimeoutExpired(cmd, timeout)
 
@@ -118,3 +119,26 @@ def test_browser_timeout_reports_manual_install_advice(tmp_vault, monkeypatch, c
     assert "Could not install browser automatically" in output
     assert "playwright install chromium" in output
     assert "python -m patchright install chromium" in output
+
+
+@pytest.mark.parametrize("command", ["install", "setup"])
+def test_browser_timeout_cannot_wait_on_inherited_output_pipes(tmp_vault, monkeypatch, command):
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
+    calls = []
+
+    def install(cmd, **kwargs):
+        calls.append(cmd)
+        # On Windows, run(timeout=...) kills the Python wrapper, then drains
+        # captured pipes without a timeout. Its Node child inherits those
+        # pipes and can keep them open indefinitely. No output is consumed.
+        assert not kwargs.get("capture_output", False)
+        assert kwargs["stdout"] == subprocess.DEVNULL
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", install)
+    if command == "install":
+        assert _setup_crawl4ai(tmp_vault) == "browser_failed"
+    else:
+        importlib.import_module("hyperresearch.cli.setup")._ensure_browser()
+    assert len(calls) == 1

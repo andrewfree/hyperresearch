@@ -358,7 +358,10 @@ def _ensure_browser() -> None:
                 subprocess.run(
                     [sys.executable, "-m", mod, "install", "chromium"],
                     check=True,
-                    capture_output=True,
+                    # A Node child inherits output handles. Captured pipes can
+                    # keep Windows timeout cleanup waiting after its parent dies.
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     timeout=300,
                 )
                 console.print("  [green]Chromium installed[/]")

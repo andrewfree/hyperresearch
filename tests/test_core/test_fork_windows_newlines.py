@@ -42,3 +42,30 @@ def test_note_bytes_parse_and_sync_with_normalized_newlines(tmp_vault, newline):
     links = tmp_vault.db.execute("SELECT target_ref, line_number FROM links WHERE source_id = 'headed'").fetchall()
     assert [(r["target_ref"], r["line_number"]) for r in links] == [("target", 3)]
     assert path.read_bytes() == content
+
+
+@pytest.mark.parametrize("newline", ["\r\n", "\r", "\n"])
+def test_legacy_cached_body_has_one_clean_heading(tmp_vault, monkeypatch, newline):
+    from hyperresearch.serve.server import HyperresearchHandler
+
+    path = tmp_vault.notes_dir / "headed.md"
+    content = "---\nid: headed\ntitle: Headed\n---\n\n" + BODY
+    path.write_bytes(content.replace("\n", newline).encode("utf-8"))
+    tmp_vault.auto_sync()
+    # An unchanged note can retain a body cached before newline normalization.
+    tmp_vault.db.execute(
+        "UPDATE note_content SET body = ? WHERE note_id = 'headed'",
+        (BODY.replace("\n", newline),),
+    )
+    handler = HyperresearchHandler.__new__(HyperresearchHandler)
+    handler._db = tmp_vault.db
+    handler.vault = tmp_vault
+    sent = []
+    monkeypatch.setattr(handler, "_send", lambda *args: sent.append(args))
+    handler._serve_note("headed")
+    assert sent[0][0] == 200
+    _, page, title = sent[0]
+    assert title == "Headed"
+    assert page.count("<h1>") == 1
+    assert "<h1>Headed Differently</h1>" in page
+    assert "\r" not in page
