@@ -57,7 +57,7 @@ def test_empty_config_still_means_defaults(tmp_path):
     assert VaultConfig.load(config_path) == VaultConfig()
 
 
-@pytest.mark.parametrize("kind", ["directory", "permission"])
+@pytest.mark.parametrize("kind", ["directory", "permission", "symlink-loop"])
 def test_load_wraps_config_read_errors(tmp_path, kind):
     import errno
     import os
@@ -68,6 +68,9 @@ def test_load_wraps_config_read_errors(tmp_path, kind):
     if kind == "directory":
         config_path.mkdir()
         expected_errno = errno.EISDIR
+    elif kind == "symlink-loop":
+        config_path.symlink_to(config_path)
+        expected_errno = errno.ELOOP
     else:
         config_path.write_text("[vault]\n", encoding="utf-8")
         config_path.chmod(0)
@@ -84,6 +87,8 @@ def test_load_wraps_config_read_errors(tmp_path, kind):
             config_path.chmod(0o600)
     if kind == "directory":
         assert config_path.is_dir()
+    elif kind == "symlink-loop":
+        assert config_path.is_symlink()
     else:
         assert config_path.read_text(encoding="utf-8") == "[vault]\n"
 
@@ -93,6 +98,17 @@ def test_dangling_config_symlink_still_means_defaults(tmp_path):
     config_path.symlink_to(tmp_path / "missing.toml")
     assert VaultConfig.load(config_path) == VaultConfig()
     assert config_path.is_symlink()
+
+
+def test_dangling_config_symlink_through_regular_file_still_means_defaults(tmp_path):
+    shared = tmp_path / "shared"
+    shared.write_text("regular file", encoding="utf-8")
+    config_path = tmp_path / "config.toml"
+    config_path.symlink_to(shared / "config.toml")
+    assert not config_path.exists()
+    assert VaultConfig.load(config_path) == VaultConfig()
+    assert config_path.is_symlink()
+    assert shared.read_text(encoding="utf-8") == "regular file"
 
 
 @pytest.mark.parametrize("raw", [
