@@ -31,8 +31,32 @@ if sys.platform == "win32":
                 pass
 
 import typer
+from typer.core import TyperGroup
 
 from hyperresearch import __version__
+from hyperresearch.core.config import ConfigInvalidError
+
+
+class _ConfigErrorGroup(TyperGroup):
+    def invoke(self, ctx):
+        # JSON options belong to subcommands, so the root context has no
+        # json_output parameter. Keep their args before Click consumes them,
+        # ignoring literal search terms after the option terminator.
+        args = ctx.args[:]
+        if "--" in args:
+            args = args[:args.index("--")]
+        json_mode = "--json" in args or "-j" in args
+        try:
+            return super().invoke(ctx)
+        except ConfigInvalidError as exc:
+            from hyperresearch.cli._output import output
+            from hyperresearch.models.output import error
+
+            if json_mode:
+                output(error(str(exc), "CONFIG_INVALID"), json_mode=True)
+            else:
+                typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from None
 
 
 def _version_callback(value: bool) -> None:
@@ -42,6 +66,7 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(
+    cls=_ConfigErrorGroup,
     name="hyperresearch",
     help="Agent-driven research knowledge base.",
     no_args_is_help=True,
