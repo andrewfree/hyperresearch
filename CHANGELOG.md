@@ -23,6 +23,7 @@
 
 ### Fixed in this fork (andrewfree/hyperresearch)
 
+- **Unreadable vault configs report a clear error.** Invalid TOML, non-UTF-8 bytes and sections that are not tables name the config file and explain that it must be fixed by hand. CLI JSON errors use `CONFIG_INVALID`, MCP returns a tool error, and hook installation refuses the config without a traceback.
 - **Templated notes keep your options and receive valid, distinct ids.** `note new --template` parses frontmatter before substituting values, so quotes in titles and `#` in tags produce valid YAML. Explicit body and metadata options override template defaults, except that command-line tags are merged with template tags. Custom frontmatter keys are preserved, and a repeated title receives a free id instead of creating an unindexed collision.
 - **Notes with numeric titles or scalar aliases are indexed again.** Numbers and dates in text fields become strings, and a single alias becomes a list. YAML booleans remain invalid rather than silently changing the note's meaning.
 - **New note ids preserve meaningful Unicode marks and distinguish symbol-only titles.** Indic vowel signs and viramas stay attached to their letters, while emoji variation selectors cannot leave invisible ids. Emoji-only and punctuation-only titles get stable ids hashed from the original title, including through MCP creation.

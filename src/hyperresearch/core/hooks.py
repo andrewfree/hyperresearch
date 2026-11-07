@@ -3682,11 +3682,15 @@ def install_hooks(
       dialectic-critic + depth-critic + width-critic + instruction-critic (Layer 5),
       patcher (Layer 6), polish-auditor (Layer 7).
     """
+    from hyperresearch.core.config import ConfigInvalidError
     from hyperresearch.core.platforms import CODEX, check_platform
 
     check_platform(platform)
     config_path = vault_root / ".hyperresearch" / "config.toml"
-    _set_render_state(profile, config_path if config_path.exists() else None, platform)
+    try:
+        _set_render_state(profile, config_path if config_path.exists() else None, platform)
+    except ConfigInvalidError as exc:
+        return [HookRefusal(f"Hooks NOT installed: {exc}")]
 
     agents = [
         (lambda fn=fn: fn(vault_root, hpr_path)) for fn in _agent_installers(platform)
