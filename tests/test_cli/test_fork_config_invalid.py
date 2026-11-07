@@ -16,6 +16,7 @@ COMMANDS = [
     ["sync"], ["config", "set", "vault.name", "Fixed"],
     ["profile", "show", "full"], ["profile", "validate"],
     ["install", ".", "--steps-only"], ["run", "init", "test-run"],
+    ["claims", "list"],
 ]
 BAD_CONFIGS = [
     pytest.param(b"[viewer\nallow_remote_images = true\n", "line 1, column 8", id="toml"),
@@ -109,3 +110,56 @@ def test_valid_config_cli_still_works(tmp_vault, monkeypatch):
     result = runner.invoke(app, ["status", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["ok"] is True
+
+
+@pytest.mark.parametrize("args,json_mode", [
+    (["note", "new", "Example", "--body", "--json"], False),
+    (["note", "new", "Example", "--body", "-j"], False),
+    (["note", "new", "Example", "--body", "--", "--json"], True),
+    (["note", "new", "Example", "-je"], True),
+    (["note", "new", "--json", "Example"], True),
+    (["search", "--json", "foo"], True),
+    (["search", "a --json b"], False),
+    (["note", "new", "a --json b"], False),
+    (["note", "new", "--", "--json"], False),
+])
+def test_config_error_uses_parsed_json_option(tmp_vault, monkeypatch, args, json_mode):
+    monkeypatch.chdir(tmp_vault.root)
+    tmp_vault.config_path.write_bytes(b"[viewer\n")
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1, result.output
+    if json_mode:
+        assert json.loads(result.stdout)["error_code"] == "CONFIG_INVALID"
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert result.stderr.startswith("Error: Invalid config ")
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("args", [["status"], ["status", "--json"]])
+def test_config_handler_preserves_unrelated_exception(tmp_vault, monkeypatch, args):
+    from hyperresearch.core.vault import Vault
+
+    def broken_discover(*args, **kwargs):
+        raise RuntimeError("unrelated implementation bug")
+
+    monkeypatch.setattr(Vault, "discover", broken_discover)
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert str(result.exception) == "unrelated implementation bug"
+    assert result.output == ""
+
+
+@pytest.mark.parametrize("contents", [None, b"", b'[vault]\nname = "Valid"\n'])
+def test_default_and_valid_configs_work_at_discovery(tmp_vault, monkeypatch, contents):
+    monkeypatch.chdir(tmp_vault.root)
+    if contents is None:
+        tmp_vault.config_path.unlink()
+    else:
+        tmp_vault.config_path.write_bytes(contents)
+    for args in (["status", "--json"], ["claims", "list", "--json"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["ok"] is True

@@ -2,6 +2,7 @@
 
 import os
 import sys
+from functools import wraps
 
 # Python version guard. The pyproject.toml `requires-python = ">=3.11,<3.15"`
 # normally blocks pip from installing on unsupported versions, but users who
@@ -37,26 +38,37 @@ from hyperresearch import __version__
 from hyperresearch.core.config import ConfigInvalidError
 
 
-class _ConfigErrorGroup(TyperGroup):
-    def invoke(self, ctx):
-        # JSON options belong to subcommands, so the root context has no
-        # json_output parameter. Keep their args before Click consumes them,
-        # ignoring literal search terms after the option terminator.
-        args = ctx.args[:]
-        if "--" in args:
-            args = args[:args.index("--")]
-        json_mode = "--json" in args or "-j" in args
+def _config_error_callback(callback):
+    @wraps(callback)
+    def wrapped(*args, **kwargs):
         try:
-            return super().invoke(ctx)
+            return callback(*args, **kwargs)
         except ConfigInvalidError as exc:
             from hyperresearch.cli._output import output
             from hyperresearch.models.output import error
 
-            if json_mode:
+            if kwargs.get("json_output", False):
                 output(error(str(exc), "CONFIG_INVALID"), json_mode=True)
             else:
                 typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from None
+
+    return wrapped
+
+
+class _ConfigErrorGroup(TyperGroup):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Wrap the built Click callbacks so JSON mode comes from parsed
+        # options, including short-option clusters and literal option values.
+        # This also covers callbacks on nested command groups such as lint.
+        pending = [self]
+        while pending:
+            command = pending.pop()
+            if command.callback is not None:
+                command.callback = _config_error_callback(command.callback)
+            if isinstance(command, TyperGroup):
+                pending.extend(command.commands.values())
 
 
 def _version_callback(value: bool) -> None:
