@@ -10,7 +10,6 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent
 
 from hyperresearch.core.config import ConfigInvalidError
 from hyperresearch.core.db import parent_subtree_clause
@@ -24,11 +23,9 @@ class _ConfigErrorMCP(FastMCP):
         except ToolError as exc:
             if not isinstance(exc.__cause__, ConfigInvalidError):
                 raise
-            # Return a protocol error directly so output-schema validation
-            # cannot replace the config diagnostic with a missing-output error.
-            return CallToolResult(
-                isError=True, content=[TextContent(type="text", text=str(exc.__cause__))],
-            )
+            # MCP 1.6 and later turn exceptions into isError results before
+            # output validation; 1.6 cannot pass through a CallToolResult.
+            raise exc.__cause__ from None
 
 
 server = _ConfigErrorMCP("hyperresearch", instructions=(

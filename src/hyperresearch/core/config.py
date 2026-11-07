@@ -292,9 +292,12 @@ class VaultConfig:
 
     @classmethod
     def load(cls, config_path: Path) -> VaultConfig:
-        if not config_path.exists():
+        try:
+            raw = config_path.read_bytes()
+        except FileNotFoundError:
             return cls()
-        raw = config_path.read_bytes()
+        except OSError as exc:
+            raise ConfigInvalidError(config_path, str(exc)) from exc
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -308,7 +311,7 @@ class VaultConfig:
             data = tomllib.loads(text)
         except tomllib.TOMLDecodeError as exc:
             reason = str(exc)
-            # Python 3.11 reports EOF without a position; 3.14 includes one.
+            # Some TOML errors report EOF without a position on both Python 3.11 and 3.14.
             if reason.endswith("(at end of document)"):
                 line = text.count("\n") + 1
                 column = len(text.rsplit("\n", 1)[-1]) + 1
@@ -322,6 +325,10 @@ class VaultConfig:
         ):
             if section in data and not isinstance(data[section], dict):
                 raise ConfigInvalidError(config_path, f"[{section}] must be a table")
+
+        for name, table in data.get("profile", {}).items():
+            if not isinstance(table, dict):
+                raise ConfigInvalidError(config_path, f"[profile.{cls._toml_key(name)}] must be a table")
 
         vault = data.get("vault", {})
         sync = data.get("sync", {})

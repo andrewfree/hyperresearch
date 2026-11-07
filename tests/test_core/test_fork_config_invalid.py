@@ -55,3 +55,74 @@ def test_empty_config_still_means_defaults(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_bytes(b"")
     assert VaultConfig.load(config_path) == VaultConfig()
+
+
+@pytest.mark.parametrize("kind", ["directory", "permission"])
+def test_load_wraps_config_read_errors(tmp_path, kind):
+    import errno
+    import os
+
+    from hyperresearch.core.config import ConfigInvalidError
+
+    config_path = tmp_path / "config.toml"
+    if kind == "directory":
+        config_path.mkdir()
+        expected_errno = errno.EISDIR
+    else:
+        config_path.write_text("[vault]\n", encoding="utf-8")
+        config_path.chmod(0)
+        expected_errno = errno.EACCES
+    try:
+        with pytest.raises(ConfigInvalidError) as caught:
+            VaultConfig.load(config_path)
+        assert str(config_path) in str(caught.value)
+        assert os.strerror(expected_errno) in str(caught.value)
+        assert isinstance(caught.value.__cause__, OSError)
+        assert caught.value.__cause__.errno == expected_errno
+    finally:
+        if kind == "permission":
+            config_path.chmod(0o600)
+    if kind == "directory":
+        assert config_path.is_dir()
+    else:
+        assert config_path.read_text(encoding="utf-8") == "[vault]\n"
+
+
+def test_dangling_config_symlink_still_means_defaults(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.symlink_to(tmp_path / "missing.toml")
+    assert VaultConfig.load(config_path) == VaultConfig()
+    assert config_path.is_symlink()
+
+
+@pytest.mark.parametrize("raw", [
+    "[profile]\nmine = 3\n",
+    "profile.mine = 1\n",
+    'profile."my gear" = false\n',
+])
+def test_load_refuses_non_table_profile_entries(tmp_path, raw):
+    from hyperresearch.core.config import ConfigInvalidError
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(raw, encoding="utf-8")
+    with pytest.raises(ConfigInvalidError) as caught:
+        VaultConfig.load(config_path)
+    assert str(config_path) in str(caught.value)
+    key = 'profile."my gear"' if "my gear" in raw else "profile.mine"
+    assert f"[{key}] must be a table" in str(caught.value)
+    assert config_path.read_text(encoding="utf-8") == raw
+
+
+@pytest.mark.parametrize("body,name,detail", [
+    ("[profile.mine]\nsource_minn = 60\n", "mine", "invalid profile"),
+    ("[profile.mine]\nsource_target = [80, 55]\n", "mine", "invalid profile"),
+    ("[profile.mine]\n", "missing", "unknown profile"),
+])
+def test_profile_content_errors_still_raise_profile_error(tmp_path, body, name, detail):
+    from hyperresearch.core.profiles import ProfileError, resolve_profile
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(body, encoding="utf-8")
+    assert "mine" in VaultConfig.load(config_path).profile_overlays
+    with pytest.raises(ProfileError, match=detail):
+        resolve_profile(name, config_path)
