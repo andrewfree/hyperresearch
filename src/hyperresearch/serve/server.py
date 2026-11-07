@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import html as html_mod
 import json
 import re
@@ -17,6 +18,8 @@ from hyperresearch.serve.renderer import path_href, render_markdown
 # BSD-derived stacks (macOS included) let a SO_REUSEADDR bind to a specific
 # address succeed beside another socket's wildcard bind on the same port.
 _REUSEADDR_BINDS_BESIDE_WILDCARD = sys.platform == "darwin" or "bsd" in sys.platform
+# Winsock permits even a plain loopback bind beside wildcard listeners.
+_WINDOWS_WILDCARD_PROBES = sys.platform == "win32"
 
 # DNS rebinding: a page on an attacker's domain can re-point that name at
 # 127.0.0.1 and then read the vault as same-origin, but the browser still
@@ -633,23 +636,21 @@ class HyperresearchHandler(BaseHTTPRequestHandler):
 
 
 class HyperresearchServer(ThreadingHTTPServer):
-    """ThreadingHTTPServer whose listening port is exclusively ours on every platform.
+    """ThreadingHTTPServer whose listening port is exclusively ours.
 
-    HTTPServer sets ``allow_reuse_address`` (SO_REUSEADDR) so a restarted
-    server can reclaim a port whose previous owner is still in TIME_WAIT.
-    On Linux a bind with the option still fails while another socket
-    listens on an overlapping address. BSD-derived stacks, macOS included,
-    also let it bind 127.0.0.1 beside another process's wildcard
-    (0.0.0.0) listener on the same port, and the more specific bind then
-    receives that process's 127.0.0.1 connections; ``server_bind`` refuses
-    such a port. Winsock gives SO_REUSEADDR a
-    different meaning: the bind is allowed to succeed on a port another
-    socket is actively listening on, so the port is shared rather than
-    reclaimed, and neither listener is guaranteed the connections. With
-    ``port=0`` that also means the OS-picked port is not exclusively ours.
-    Windows does not need the option for the POSIX use case, since a plain
-    bind there already succeeds over TIME_WAIT entries, so leave it off.
-    This mirrors CPython's own ``test.support.bind_port`` choice.
+    POSIX uses SO_REUSEADDR to reclaim TIME_WAIT ports. Linux still refuses
+    overlapping listeners, but BSD-derived stacks, including macOS, permit
+    a loopback bind beside another process's wildcard listener. Probe the
+    wildcard first so the viewer cannot take that process's IPv4 traffic.
+
+    Winsock uses SO_REUSEADDR to share live ports, so leave it off there.
+    Even a plain loopback bind, or one with SO_EXCLUSIVEADDRUSE, can succeed
+    beside an IPv4 or dual-stack IPv6 wildcard listener. Windows therefore
+    needs separate plain-bind probes for both wildcards. Missing IPv6 support
+    must not block IPv4 serving. An occupied IPv6 wildcard is conservatively
+    refused even if its listener is IPv6-only; a refused TCP connection cannot
+    distinguish that from a dual-stack listener with a full queue.
+    An OS-chosen port (port=0) needs no probe.
     """
 
     allow_reuse_address = sys.platform != "win32"
@@ -659,7 +660,24 @@ class HyperresearchServer(ThreadingHTTPServer):
 
     def server_bind(self):
         port = self.server_address[1]
-        if _REUSEADDR_BINDS_BESIDE_WILDCARD and port and self.address_family == socket.AF_INET:
+        if _WINDOWS_WILDCARD_PROBES and port and self.address_family == socket.AF_INET:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind(("0.0.0.0", port))
+            except OSError as e:
+                if e.errno in (errno.EADDRINUSE, 10048):
+                    raise OSError(errno.EADDRINUSE, "Address already in use") from e
+                raise
+            try:
+                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                    probe.bind(("::", port))
+            except OSError as e:
+                # IPv6 may be disabled or unavailable. Only an occupied
+                # wildcard is relevant to our IPv4 listener.
+                if e.errno in (errno.EADDRINUSE, 10048):
+                    raise OSError(errno.EADDRINUSE, "Address already in use") from e
+        elif _REUSEADDR_BINDS_BESIDE_WILDCARD and port and self.address_family == socket.AF_INET:
             # A SO_REUSEADDR bind to the wildcard itself still passes over
             # TIME_WAIT but fails while a socket holds 0.0.0.0 on this port,
             # including a dual-stack "::" listener. Those are the listeners

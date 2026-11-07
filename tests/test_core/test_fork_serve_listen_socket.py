@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import socket
+import sys
 from http.client import HTTPConnection
 from threading import Thread
 
@@ -48,9 +49,9 @@ def _answers_loopback(port: int) -> bool:
     ids=["0.0.0.0", "dual-stack ::"],
 )
 def test_port_held_by_a_wildcard_listener_is_refused(make_listener):
-    """BSD and macOS let a SO_REUSEADDR bind to 127.0.0.1 succeed beside another
-    process's wildcard listener, and the more specific bind then receives all
-    of that process's 127.0.0.1 connections. A plain bind would fail."""
+    """BSD and macOS permit a SO_REUSEADDR loopback bind beside a wildcard
+    listener; Windows even permits a plain bind. Refuse the port rather than
+    taking the other process's 127.0.0.1 connections."""
     with make_listener() as other:
         port = other.getsockname()[1]
         assert _answers_loopback(port), "premise: the other listener answers 127.0.0.1"
@@ -62,8 +63,8 @@ def test_port_held_by_a_wildcard_listener_is_refused(make_listener):
 
 
 def test_ipv6_only_listener_does_not_block_the_port():
-    """An IPv6-only wildcard listener never sees 127.0.0.1 traffic, so there is
-    nothing to take from it and the port stays usable."""
+    """POSIX can keep using IPv4 beside an IPv6-only wildcard. Windows' dual
+    wildcard guard conservatively refuses any occupied IPv6 wildcard."""
     for _ in range(10):
         with _ipv6_listener(1) as other:
             port = other.getsockname()[1]
@@ -77,8 +78,13 @@ def test_ipv6_only_listener_does_not_block_the_port():
                     continue
             assert not _answers_loopback(port), "premise: the other listener ignores 127.0.0.1"
 
-            with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
-                assert server.server_address == ("127.0.0.1", port)
+            if sys.platform == "win32":
+                with pytest.raises(OSError) as exc:
+                    HyperresearchServer(("127.0.0.1", port), HyperresearchHandler)
+                assert exc.value.errno == errno.EADDRINUSE
+            else:
+                with HyperresearchServer(("127.0.0.1", port), HyperresearchHandler) as server:
+                    assert server.server_address == ("127.0.0.1", port)
             return
     pytest.fail("could not find a port free in both IPv4 and IPv6")
 

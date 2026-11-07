@@ -18,7 +18,7 @@ def test_link_diagnostics_use_file_lines(tmp_vault, monkeypatch, newline, bom):
         body="para one\n\npara two\n\nSee [[missing-paper]] and [[target]].\n",
     )
     write_note(tmp_vault.notes_dir, "Target")
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     path.write_bytes((bom + content.replace("\n", newline)).encode())
     line = next(i for i, text in enumerate(content.splitlines(), 1) if "missing-paper" in text)
     monkeypatch.chdir(tmp_vault.root)

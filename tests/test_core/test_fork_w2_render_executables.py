@@ -16,6 +16,6 @@ def test_custom_research_dir_keeps_agent_executable(tmp_vault, platform, windows
         agent = tmp_vault.root / ".claude/agents/hyperresearch-cite-checker.md"
     else:
         agent = tmp_vault.root / ".codex/agents/hyperresearch-cite-checker.toml"
-    text = agent.read_text()
+    text = agent.read_text(encoding="utf-8")
     assert executable.replace("\\", "/") in text
     assert "kb/runs/<vault_tag>/cite-check-pairs.json" in text

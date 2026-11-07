@@ -13,7 +13,7 @@ def test_upgrade_restores_filtered_links_without_changing_notes(tmp_vault, ref):
     source = write_note(tmp_vault.notes_dir, "Source", body=f"See [[{ref}]].")
     tmp_vault.auto_sync()
     claims = tmp_vault.research_dir / "claims-source.json"
-    claims.write_text('[{"claim": "Keep this claim"}]')
+    claims.write_text('[{"claim": "Keep this claim"}]', encoding="utf-8")
     assert ingest_claims_file(tmp_vault.db, claims)["ingested"] == 1
     # Reproduce the cache left by the old filter, with unchanged Markdown.
     tmp_vault.db.execute("DELETE FROM links")

@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -8,6 +9,7 @@ from hyperresearch.core import runs
 
 
 @pytest.mark.parametrize("status,reason", [("paused", None), ("blocked", "max_sources")])
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows chmod(0o555) does not make a directory read-only")
 def test_resume_readonly_directory_with_writable_lock(tmp_vault, monkeypatch, status, reason):
     tag = "readonly-bbbbbb"
     runs.init_run(tmp_vault, tag)

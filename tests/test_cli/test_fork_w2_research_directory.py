@@ -39,7 +39,7 @@ def test_legacy_root_research_scan_excludes_internal_files(tmp_path):
     for folder in (".hyperresearch/exports", ".git", ".claude", ".codex", ".agents"):
         directory = vault.root / folder
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "internal.md").write_text("---\ntitle: Internal\n---\nNot a note.\n")
+        (directory / "internal.md").write_text("---\ntitle: Internal\n---\nNot a note.\n", encoding="utf-8")
     plan = compute_sync_plan(vault)
     assert plan.to_add == [note]
     result = execute_sync(vault, plan)

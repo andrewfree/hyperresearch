@@ -134,7 +134,8 @@ def render_markdown(
     """
     resolved = resolved or {}
     # Escape HTML first
-    text = html.escape(body)
+    # Also handle bodies already cached by older versions and direct callers.
+    text = html.escape(body.replace("\r\n", "\n").replace("\r", "\n"))
 
     # Handle code blocks (preserve them)
     code_blocks = []

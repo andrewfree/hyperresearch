@@ -16,7 +16,7 @@ runner = CliRunner()
 def test_nonmapping_frontmatter_is_preserved(tmp_vault, monkeypatch, tool, yaml_value):
     path = write_note(tmp_vault.notes_dir, "Alpha Note", tags=["keep"])
     tmp_vault.auto_sync()
-    path.write_text(f"---\n{yaml_value}\n---\n\nBody\n")
+    path.write_text(f"---\n{yaml_value}\n---\n\nBody\n", encoding="utf-8")
     before = path.read_bytes()
     monkeypatch.chdir(tmp_vault.root)
     if tool == "mcp":

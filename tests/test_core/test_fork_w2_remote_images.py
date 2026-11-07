@@ -61,7 +61,7 @@ def test_viewer_setting_defaults_off_and_round_trips(tmp_path):
     config.viewer = replace(config.viewer, allow_remote_images=True)
     config.save(config_path)
 
-    assert "[viewer]" in config_path.read_text()
+    assert "[viewer]" in config_path.read_text(encoding="utf-8")
     assert VaultConfig.load(config_path).viewer.allow_remote_images is True
 
 

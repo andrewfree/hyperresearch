@@ -159,6 +159,8 @@ The `dev` extra provides pytest and the development tools. Test both supported e
 
 ## Known issues and deliberate trade-offs
 
+- On Windows, the viewer conservatively refuses a port held by an IPv6 wildcard listener even when that listener is IPv6-only. A failed dual-stack wildcard bind cannot safely distinguish it from a dual-stack listener whose connection queue is full. POSIX still allows serving beside an IPv6-only listener.
+
 - Plain `3d` no longer matches `3-D` through query expansion because digit-letter splitting was dropped so `gpt4o` matches `GPT-4o`.
 - An AND search whose terms lie far apart in a very large note can return a matching note with an excerpt that has no highlights because the excerpt does not contain the entire query.
 - On Windows, replacing an index page can fail if another process holds it open without allowing deletion or replacement.

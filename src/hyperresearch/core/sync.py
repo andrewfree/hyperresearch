@@ -71,7 +71,7 @@ def _should_exclude(rel_path: str, exclude_parts: list[str]) -> bool:
     return first in exclude_parts
 
 
-_FRONTMATTER_PROBE = re.compile(rb"^---[ \t]*\r?\n")
+_FRONTMATTER_PROBE = re.compile(rb"^---[ \t]*[\r\n]")
 
 
 def _has_frontmatter(path: Path) -> bool:

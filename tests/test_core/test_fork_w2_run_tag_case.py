@@ -15,9 +15,9 @@ def test_init_rejects_existing_manifest_for_different_tag(tmp_vault):
     tag = "topic-aaaaaa"
     init_run(tmp_vault, tag)
     manifest = tmp_vault.run_dir(tag) / "run.json"
-    data = json.loads(manifest.read_text())
+    data = json.loads(manifest.read_text(encoding="utf-8"))
     data["vault_tag"] = "Topic-aaaaaa"
-    manifest.write_text(json.dumps(data))
+    manifest.write_text(json.dumps(data), encoding="utf-8")
     original = manifest.read_bytes()
     with pytest.raises(RunError, match="collision"):
         init_run(tmp_vault, tag)

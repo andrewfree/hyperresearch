@@ -359,10 +359,11 @@ def _ensure_browser() -> None:
                     [sys.executable, "-m", mod, "install", "chromium"],
                     check=True,
                     capture_output=True,
+                    timeout=300,
                 )
                 console.print("  [green]Chromium installed[/]")
                 break
-            except (subprocess.CalledProcessError, FileNotFoundError):
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
                 continue
         else:
             console.print(
