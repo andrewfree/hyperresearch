@@ -129,8 +129,10 @@ def test_setup_rejects_an_unknown_profile_before_writing(tmp_path, monkeypatch, 
 
 
 def test_non_interactive_setup_passes_the_flags_to_install(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
     calls = []
-    monkeypatch.setattr("subprocess.call", lambda cmd: calls.append(cmd) or 0)
+    monkeypatch.setattr("subprocess.Popen", lambda cmd: calls.append(cmd) or Mock(wait=lambda: 0))
 
     result = runner.invoke(
         app, ["setup", str(tmp_path), "--name", "Lab Notebook", "--profile", "premier", "--json"]

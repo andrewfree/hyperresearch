@@ -27,7 +27,7 @@ def test_mcp_edit_becomes_the_most_recent_note(tmp_vault, monkeypatch):
     result = json.loads(server.update_note("gamma-note", summary="edited by MCP, later"))
     after = datetime.now(UTC)
     assert result["ok"] is True
-    meta, body = parse_frontmatter(path.read_text())
+    meta, body = parse_frontmatter(path.read_text(encoding="utf-8"))
     assert meta.updated is not None
     assert before <= meta.updated <= after
     assert body == "Body\n"

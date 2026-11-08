@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import errno
+import os
 from pathlib import Path
 
 import pytest
 
 from hyperresearch.core.vault import Vault
+
+
+@pytest.fixture(autouse=True)
+def _disable_browser_setup(request, monkeypatch):
+    """Install/setup tests must opt in before checking or installing a browser."""
+    if request.node.get_closest_marker("browser_setup"):
+        return
+    monkeypatch.setattr("hyperresearch.cli.install._setup_crawl4ai", lambda vault: "not_installed")
+    monkeypatch.setattr("hyperresearch.cli.setup._ensure_browser", lambda: None)
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +34,22 @@ def _reset_render_state():
 
     yield
     hooks._RENDER_STATE = None
+
+
+@pytest.fixture
+def deny_file_reads(monkeypatch):
+    """Model an ACL read denial where chmod cannot remove read access."""
+    original = Path.read_bytes
+
+    def deny(file):
+        def read_bytes(self):
+            if self == file:
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(self))
+            return original(self)
+
+        monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+    return deny
 
 
 @pytest.fixture

@@ -161,7 +161,7 @@ The `dev` extra provides pytest and the development tools. Test both supported e
 
 - Plain `3d` no longer matches `3-D` through query expansion because digit-letter splitting was dropped so `gpt4o` matches `GPT-4o`.
 - An AND search whose terms lie far apart in a very large note can return a matching note with an excerpt that has no highlights because the excerpt does not contain the entire query.
-- On Windows, replacing an index page can fail if another process holds it open without allowing deletion or replacement.
+- On Windows, replacing a run manifest or index page makes up to five attempts on brief permission errors. A process that holds the destination open without allowing replacement beyond these short retries still causes an error.
 - Crawl4AI navigation failures can carry the provider's full, long error text into fetch-batch output.
 - A move combined with an edit in the same sync is treated as a delete plus an add, so the note's stored claims are not carried over.
 - After an external file removal, a byte-identical, never-indexed copy with the same id can inherit the removed note's stored rows because sync cannot distinguish it from a move; explicit `note rm` clears those rows first.

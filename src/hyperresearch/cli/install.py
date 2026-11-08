@@ -408,6 +408,13 @@ def install(
             console.print("[green]crawl4ai:[/] detected, set as default provider + browser ready")
         elif crawl4ai_status == "browser_installed":
             console.print("[green]crawl4ai:[/] browser installed + set as default provider")
+        elif crawl4ai_status == "browser_failed":
+            console.print("[yellow]crawl4ai:[/] detected, set as default provider")
+            console.print(
+                "  [red]Could not install browser automatically.[/]\n"
+                "  Run: playwright install chromium\n"
+                "  (stealth adapter setups need: python -m patchright install chromium)"
+            )
         elif crawl4ai_status == "not_installed":
             console.print(
                 "[dim]crawl4ai:[/] not installed. "
@@ -444,7 +451,7 @@ def _setup_crawl4ai(vault) -> str:
     """Detect crawl4ai, install browser if needed, set as default provider.
 
     Returns: 'configured' (already ready), 'browser_installed' (just set up),
-             'not_installed' (crawl4ai not available).
+             'not_installed' (crawl4ai not available), 'browser_failed' (manual setup needed).
     """
     try:
         import crawl4ai  # noqa: F401
@@ -483,18 +490,18 @@ def _setup_crawl4ai(vault) -> str:
     import subprocess
     import sys
 
+    from hyperresearch.cli._browser import InstallerCleanupError, run_installer
+
     installers = []
     if importlib.util.find_spec("patchright") is not None:
         installers.append("patchright")
     installers.append("playwright")
     for mod in installers:
         try:
-            subprocess.run(
-                [sys.executable, "-m", mod, "install", "chromium"],
-                check=True,
-                capture_output=True,
-            )
+            run_installer([sys.executable, "-m", mod, "install", "chromium"])
             return "browser_installed"
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except InstallerCleanupError:
+            break
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             continue
-    return "configured"  # best effort — user can install manually
+    return "browser_failed"  # Best effort; user can install manually.

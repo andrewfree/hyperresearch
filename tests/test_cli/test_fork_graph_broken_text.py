@@ -39,7 +39,7 @@ def _text(*args: str) -> str:
 def test_graph_broken_shows_targets(broken_vault):
     out = _text("graph", "broken")
     line = next(i for i, text in enumerate(
-        (broken_vault / "research/notes/source.md").read_text().splitlines(), 1
+        (broken_vault / "research/notes/source.md").read_text(encoding="utf-8").splitlines(), 1
     ) if "missing-paper" in text)
     assert f"source line {line}: [[missing-paper]]" in out
     assert f"source line {line}: [[Missing Paper Two]]" in out

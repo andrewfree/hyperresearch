@@ -12,7 +12,7 @@ def test_single_report_with_partial_spend(tmp_vault, monkeypatch, spend):
     tag = "partial-aaaaaa"
     manifest = init_run(tmp_vault, tag)
     manifest["spend"] = spend
-    (tmp_vault.run_dir(tag) / "run.json").write_text(json.dumps(manifest))
+    (tmp_vault.run_dir(tag) / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.chdir(tmp_vault.root)
     result = CliRunner().invoke(app, ["run", "report", tag])
     assert result.exit_code == 0, repr(result.exception)

@@ -21,7 +21,7 @@ runner = CliRunner()
 def test_broken_frontmatter_is_not_overwritten(tmp_vault, monkeypatch, tool, broken):
     path = write_note(tmp_vault.notes_dir, "Alpha Note", tags=["keep"], body="Body\n")
     tmp_vault.auto_sync()
-    path.write_text(broken)
+    path.write_text(broken, encoding="utf-8")
     before = path.read_bytes()
     monkeypatch.chdir(tmp_vault.root)
     if tool == "mcp":

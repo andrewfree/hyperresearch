@@ -12,15 +12,23 @@ runner = CliRunner()
 
 
 @pytest.mark.parametrize("newline,bom", [("\n", ""), ("\r\n", "\ufeff")])
-def test_link_diagnostics_use_file_lines(tmp_vault, monkeypatch, newline, bom):
+@pytest.mark.parametrize("writer_newline", [b"\n", b"\r\n"])
+@pytest.mark.parametrize("progress", ["para one", "10%\r20%\r30%"])
+def test_link_diagnostics_use_file_lines(tmp_vault, monkeypatch, newline, bom, writer_newline, progress):
     path = write_note(
         tmp_vault.notes_dir, "Source",
-        body="para one\n\npara two\n\nSee [[missing-paper]] and [[target]].\n",
+        body=f"{progress}\n\npara two\n\nSee [[missing-paper]] and [[target]].\n",
     )
     write_note(tmp_vault.notes_dir, "Target")
-    content = path.read_text()
+    # Exercise native writer bytes from both POSIX and Windows on every host.
+    native = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", writer_newline)
+    path.write_bytes(native)
+    # Normalize the writer before choosing the fixture ending; keep lone CRs.
+    content = path.read_bytes().decode("utf-8").replace("\r\n", "\n")
+    if "\r" in progress:
+        content = content.replace("---\n\n", 'build: "10%\r20%"\n---\n\n', 1)
     path.write_bytes((bom + content.replace("\n", newline)).encode())
-    line = next(i for i, text in enumerate(content.splitlines(), 1) if "missing-paper" in text)
+    line = next(i for i, text in enumerate(content.split("\n"), 1) if "missing-paper" in text)
     monkeypatch.chdir(tmp_vault.root)
 
     for args in (["graph", "broken"], ["graph", "outlinks", "source"],
@@ -36,6 +44,11 @@ def test_link_diagnostics_use_file_lines(tmp_vault, monkeypatch, newline, bom):
     assert f"source line {line}: [[missing-paper]]" in result.output
     result = runner.invoke(app, ["lint", "-r", "broken-links"])
     assert f"research/notes/source.md line {line}" in " ".join(result.output.split())
+    result = runner.invoke(app, ["lint", "-r", "broken-links", "--json"])
+    assert result.exit_code == 0, result.output
+    issues = json.loads(result.output)["data"]["issues"]
+    assert len(issues) == 1
+    assert issues[0]["line"] == line
 
 
 @pytest.mark.parametrize("broken", [

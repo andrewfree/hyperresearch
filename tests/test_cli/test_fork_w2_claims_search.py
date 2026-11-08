@@ -16,7 +16,7 @@ def claims_vault(tmp_vault, monkeypatch):
     write_note(tmp_vault.notes_dir, "Source")
     tmp_vault.auto_sync()
     path = tmp_vault.research_dir / "claims-source.json"
-    path.write_text(json.dumps([{"claim": "GPT-4 measured 86.4% and it's reliable."}]))
+    path.write_text(json.dumps([{"claim": "GPT-4 measured 86.4% and it's reliable."}]), encoding="utf-8")
     assert ingest_claims_file(tmp_vault.db, path)["ingested"] == 1
     tmp_vault.db.commit()
     return tmp_vault

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -185,7 +186,7 @@ def test_dangling_config_symlink_through_regular_file_status_json(tmp_vault, mon
 
 
 @pytest.fixture(params=["directory", "permission"])
-def unreadable_config(tmp_vault, request):
+def unreadable_config(tmp_vault, request, deny_file_reads):
     import errno
     import os
 
@@ -193,9 +194,13 @@ def unreadable_config(tmp_vault, request):
     if request.param == "directory":
         config_path.unlink()
         config_path.mkdir()
-        detail = os.strerror(errno.EISDIR)
+        detail = os.strerror(errno.EACCES if sys.platform == "win32" else errno.EISDIR)
     else:
-        config_path.chmod(0)
+        if sys.platform == "win32":
+            # Windows chmod cannot remove read access. Keep POSIX's real check.
+            deny_file_reads(config_path)
+        else:
+            config_path.chmod(0)
         detail = os.strerror(errno.EACCES)
     try:
         yield config_path, detail

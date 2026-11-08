@@ -233,10 +233,11 @@ def test_setup_without_a_terminal_still_makes_its_directory(tmp_path: Path, monk
     hands off to install, so it passes --create rather than get a refusal
     that names an option `setup` does not have."""
     import subprocess
+    from unittest.mock import Mock
 
     monkeypatch.chdir(tmp_path)
     calls: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "call", lambda cmd: calls.append(cmd) or 0)
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd: calls.append(cmd) or Mock(wait=lambda: 0))
     target = str(tmp_path / "new-vault")
 
     result = runner.invoke(app, ["setup", target, *args], input="")

@@ -1,5 +1,7 @@
 """Config decoding fails with one typed error and leaves the file untouched."""
 
+import sys
+
 import pytest
 
 from hyperresearch.core.config import VaultConfig
@@ -58,7 +60,7 @@ def test_empty_config_still_means_defaults(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["directory", "permission", "symlink-loop"])
-def test_load_wraps_config_read_errors(tmp_path, kind):
+def test_load_wraps_config_read_errors(tmp_path, kind, deny_file_reads):
     import errno
     import os
 
@@ -67,21 +69,32 @@ def test_load_wraps_config_read_errors(tmp_path, kind):
     config_path = tmp_path / "config.toml"
     if kind == "directory":
         config_path.mkdir()
-        expected_errno = errno.EISDIR
+        expected_errno = errno.EACCES if sys.platform == "win32" else errno.EISDIR
     elif kind == "symlink-loop":
         config_path.symlink_to(config_path)
-        expected_errno = errno.ELOOP
+        # Measured with read_bytes on Windows 11, Python 3.11.17: EINVAL, no winerror.
+        expected_errno = errno.EINVAL if sys.platform == "win32" else errno.ELOOP
     else:
         config_path.write_text("[vault]\n", encoding="utf-8")
-        config_path.chmod(0)
+        if sys.platform == "win32":
+            # Windows chmod only controls writing, so model an ACL read denial.
+            deny_file_reads(config_path)
+        else:
+            config_path.chmod(0)
         expected_errno = errno.EACCES
     try:
         with pytest.raises(ConfigInvalidError) as caught:
             VaultConfig.load(config_path)
         assert str(config_path) in str(caught.value)
-        assert os.strerror(expected_errno) in str(caught.value)
-        assert isinstance(caught.value.__cause__, OSError)
-        assert caught.value.__cause__.errno == expected_errno
+        cause = caught.value.__cause__
+        assert isinstance(cause, OSError)
+        if sys.platform == "win32":
+            # Windows file errors carry their own message, not the CRT errno text.
+            assert cause.strerror in str(caught.value)
+            assert cause.errno == expected_errno
+        else:
+            assert os.strerror(expected_errno) in str(caught.value)
+            assert cause.errno == expected_errno
     finally:
         if kind == "permission":
             config_path.chmod(0o600)

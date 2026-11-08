@@ -164,7 +164,7 @@ def test_sync_deletes_the_note_whose_file_a_move_overwrote(tmp_vault):
     _seed(tmp_vault, "a")
     _seed(tmp_vault, "b")
 
-    os.rename(notes / "a.md", notes / "b.md")
+    os.replace(notes / "a.md", notes / "b.md")
     result = _sync(tmp_vault)
 
     assert result.errors == []

@@ -56,7 +56,7 @@ def file_line_number(path: Path, body_line: int) -> int:
     from hyperresearch.core.frontmatter import FRONTMATTER_RE
 
     try:
-        content = path.read_text(encoding="utf-8-sig")
+        content = path.read_bytes().decode("utf-8-sig").replace("\r\n", "\n")
     except (OSError, UnicodeError):
         # Sync keeps the last readable cache when a file is half-written.
         return body_line

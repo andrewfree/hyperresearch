@@ -10,7 +10,7 @@ def test_upgrade_replaces_mangled_backtick_links(tmp_vault):
     source = write_note(tmp_vault.notes_dir, "Source", body="See [[A `code` title]].")
     tmp_vault.auto_sync()
     claims = tmp_vault.research_dir / "claims-source.json"
-    claims.write_text('[{"claim": "Keep this claim"}]')
+    claims.write_text('[{"claim": "Keep this claim"}]', encoding="utf-8")
     assert ingest_claims_file(tmp_vault.db, claims)["ingested"] == 1
     # Reproduce the previous cache without editing the authoritative notes.
     tmp_vault.db.execute("DELETE FROM links")

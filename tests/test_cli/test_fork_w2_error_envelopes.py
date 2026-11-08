@@ -39,11 +39,11 @@ def test_levers_set_corrupt_json_envelope(tmp_vault, monkeypatch):
     tag = "m-ffffff"
     init_run(tmp_vault, tag)
     decomp = tmp_vault.run_dir(tag) / "prompt-decomposition.json"
-    decomp.write_text('{"levers": ')
+    decomp.write_text('{"levers": ', encoding="utf-8")
     result = CliRunner().invoke(app, ["levers", "set", tag, "register=teach", "--json"])
     assert result.exit_code == 1
     assert json.loads(result.output)["error_code"] == "LEVER_ERROR"
-    assert decomp.read_text() == '{"levers": '
+    assert decomp.read_text(encoding="utf-8") == '{"levers": '
 
 
 @pytest.mark.parametrize("cmd", ["status", "resume"])
@@ -51,7 +51,7 @@ def test_incomplete_manifest_envelope(tmp_vault, monkeypatch, cmd):
     monkeypatch.chdir(tmp_vault.root)
     tag = "m-ffffff"
     init_run(tmp_vault, tag)
-    (tmp_vault.run_dir(tag) / "run.json").write_text("{}")
+    (tmp_vault.run_dir(tag) / "run.json").write_text("{}", encoding="utf-8")
     result = CliRunner().invoke(app, ["run", cmd, tag, "--json"])
     assert result.exit_code == 1
     assert json.loads(result.output)["error_code"] == "RUN_ERROR"

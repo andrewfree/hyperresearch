@@ -43,7 +43,9 @@ def read_note(file_path: Path, vault_root: Path) -> Note:
     """Read a markdown file and parse into a Note."""
     raw_bytes = file_path.read_bytes()
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
-    content = raw_bytes.decode("utf-8-sig")  # Handles BOM
+    # Hash original bytes and normalize CRLF for parsing and cached bodies.
+    # Lone CRs are content, so line numbers still count only LF characters.
+    content = raw_bytes.decode("utf-8-sig").replace("\r\n", "\n")
     meta, body = parse_frontmatter(content)
     # parse_frontmatter hands the whole content back as the body when it found
     # no frontmatter it could parse; a file that opens with a delimiter all the

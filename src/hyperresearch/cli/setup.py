@@ -44,7 +44,18 @@ def setup(
             cmd += ["--profile", gear]
         if json_output:
             cmd.append("--json")
-        raise typer.Exit(subprocess.call(cmd))
+        process = subprocess.Popen(cmd)
+        try:
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            # Let install finish stopping its browser tree before exiting.
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise typer.Exit(130)
+        raise typer.Exit(returncode)
 
     root = Path(path).resolve()
 
@@ -349,24 +360,23 @@ def _ensure_browser() -> None:
         import importlib.util
         import subprocess
 
+        from hyperresearch.cli._browser import InstallerCleanupError, run_installer
+
         installers = []
         if importlib.util.find_spec("patchright") is not None:
             installers.append("patchright")
         installers.append("playwright")
         for mod in installers:
             try:
-                subprocess.run(
-                    [sys.executable, "-m", mod, "install", "chromium"],
-                    check=True,
-                    capture_output=True,
-                )
+                run_installer([sys.executable, "-m", mod, "install", "chromium"])
                 console.print("  [green]Chromium installed[/]")
+                return
+            except InstallerCleanupError:
                 break
-            except (subprocess.CalledProcessError, FileNotFoundError):
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
                 continue
-        else:
-            console.print(
-                "  [red]Could not install browser automatically.[/]\n"
-                "  Run: playwright install chromium\n"
-                "  (stealth adapter setups need: python -m patchright install chromium)"
-            )
+        console.print(
+            "  [red]Could not install browser automatically.[/]\n"
+            "  Run: playwright install chromium\n"
+            "  (stealth adapter setups need: python -m patchright install chromium)"
+        )

@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -23,6 +24,7 @@ def test_install_preserves_non_utf8_docs(tmp_path):
 
 
 @pytest.mark.parametrize("args", [[], ["--steps-only"]])
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows chmod(0o555) does not make a directory read-only")
 def test_install_readonly_directory_envelope(tmp_path, args):
     tmp_path.chmod(0o555)
     try:
@@ -38,8 +40,8 @@ def test_install_preserves_malformed_settings(tmp_path, settings):
     config = tmp_path / ".claude" / "settings.json"
     config.parent.mkdir()
     original = json.dumps(settings)
-    config.write_text(original)
+    config.write_text(original, encoding="utf-8")
     result = CliRunner().invoke(app, ["install", str(tmp_path), "--json"])
     assert result.exit_code == 0, repr(result.exception)
-    assert config.read_text() == original
+    assert config.read_text(encoding="utf-8") == original
     assert any("NOT installed" in action for action in json.loads(result.output)["data"]["hooks_installed"])

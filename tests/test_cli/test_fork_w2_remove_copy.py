@@ -15,7 +15,7 @@ def test_remove_drops_rows_before_sync_can_adopt_copy(tmp_vault, monkeypatch):
     original = write_note(tmp_vault.notes_dir, "Foo")
     tmp_vault.auto_sync()
     claims = tmp_vault.research_dir / "claims-foo.json"
-    claims.write_text(json.dumps([{"claim": "Original claim"}]))
+    claims.write_text(json.dumps([{"claim": "Original claim"}]), encoding="utf-8")
     assert ingest_claims_file(tmp_vault.db, claims)["ingested"] == 1
     tmp_vault.db.commit()
     copy = original.with_name("foo-copy.md")
@@ -29,5 +29,5 @@ def test_remove_drops_rows_before_sync_can_adopt_copy(tmp_vault, monkeypatch):
     assert copy.exists()
     tmp_vault.auto_sync()
     row = tmp_vault.db.execute("SELECT path FROM notes WHERE id = 'foo'").fetchone()
-    assert row["path"] == str(copy.relative_to(tmp_vault.root))
+    assert row["path"] == copy.relative_to(tmp_vault.root).as_posix()
     assert tmp_vault.db.execute("SELECT COUNT(*) FROM claims").fetchone()[0] == 0

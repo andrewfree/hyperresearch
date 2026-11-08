@@ -15,7 +15,7 @@ def test_custom_research_dir_report(tmp_vault, monkeypatch):
     init_run(vault, tag)
     vault.notes_dir.mkdir(parents=True)
     report = vault.notes_dir / f"final_report_{tag}.md"
-    report.write_text("# Report\n\nA claim [[missing-note]].\n")
+    report.write_text("# Report\n\nA claim [[missing-note]].\n", encoding="utf-8")
     monkeypatch.chdir(vault.root)
     result = CliRunner().invoke(app, ["citecheck", "extract", tag, "--json"])
     assert result.exit_code == 0, result.output
@@ -29,7 +29,7 @@ def test_custom_research_dir_prompts(tmp_vault):
     tmp_vault.config.save(tmp_vault.config_path)
     install_hooks(tmp_vault.root)
     prompts = list((tmp_vault.root / ".claude").rglob("*.md"))
-    reports = [p.read_text() for p in prompts if "final_report_" in p.read_text()]
+    reports = [p.read_text(encoding="utf-8") for p in prompts if "final_report_" in p.read_text(encoding="utf-8")]
     assert reports
     assert all("research/notes/final_report_" not in text for text in reports)
     assert any("kb/notes/final_report_" in text for text in reports)
@@ -40,7 +40,7 @@ def test_custom_research_dir_preserves_runtime_paths(tmp_vault):
     tmp_vault.config.save(tmp_vault.config_path)
     install_hooks(tmp_vault.root, platform="codex")
     entry = tmp_vault.root / ".agents" / "skills" / "hyperresearch" / "SKILL.md"
-    text = entry.read_text()
+    text = entry.read_text(encoding="utf-8")
     assert ".hyperresearch/codex/steps/" in text
     assert ".hyperkb/" not in text
     assert "hyperkb/" not in text
